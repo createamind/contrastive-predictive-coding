@@ -3,7 +3,12 @@
 from data_utils import MnistGenerator
 from os.path import join, basename, dirname, exists
 import keras
-
+import datetime
+import argparse
+import tensorflow as tf
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
+session = tf.Session(config=config)
 
 def build_model(encoder_path, image_shape, learning_rate):
 
@@ -37,7 +42,7 @@ def build_model(encoder_path, image_shape, learning_rate):
     return model
 
 
-def benchmark_model(encoder_path, epochs, batch_size, output_dir, lr=1e-4, image_size=28, color=False):
+def benchmark_model(args, encoder_path, epochs, batch_size, output_dir, lr=1e-4, image_size=28, color=False):
 
     # Prepare data
     train_data = MnistGenerator(batch_size, subset='train', image_size=image_size, color=color, rescale=True)
@@ -48,8 +53,10 @@ def benchmark_model(encoder_path, epochs, batch_size, output_dir, lr=1e-4, image
     model = build_model(encoder_path, image_shape=(image_size, image_size, 3), learning_rate=lr)
 
     # Callbacks
-    callbacks = [keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=1/3, patience=2, min_lr=1e-4)]
-
+    callbacks = [
+        # keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=1/3, patience=2, min_lr=1e-4),
+        keras.callbacks.TensorBoard(log_dir='./logs/bm_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S ') , histogram_freq=0, batch_size=32, write_graph=True, write_grads=False, write_images=False, embeddings_freq=0, embeddings_layer_names=None, embeddings_metadata=None, embeddings_data=None, update_freq='epoch')
+    ]
     # Trains the model
     model.fit_generator(
         generator=train_data,
@@ -67,8 +74,65 @@ def benchmark_model(encoder_path, epochs, batch_size, output_dir, lr=1e-4, image
 
 if __name__ == "__main__":
 
+    argparser = argparse.ArgumentParser(
+        description='CPC')
+    # argparser.add_argument(
+    #     '--host',
+    #     metavar='H',
+    #     default='localhost',
+    #     help='IP of the host server (default: localhost)')
+    argparser.add_argument(
+        '--name',
+        default='cpc',
+        help='name')
+    # argparser.add_argument(
+    #     '-p', '--port',
+    #     metavar='P',
+    #     default=2000,
+    #     type=int,
+    #     help='TCP port to listen to (default: 2000)')
+    # argparser.add_argument(
+    #     '-s', '--step-limit',
+    #     default=256,
+    #     type=int,
+    #     help='Step limit of each run. (default: 256)')
+    # argparser.add_argument(
+    #     '-i', '--image-size',
+    #     default=160,
+    #     type=int,
+    #     help='Size of images (default: 320).')
+    # argparser.add_argument(
+    #     '-b', '--batch-size',
+    #     default=32,
+    #     type=int,
+    #     help='Size of batches.')
+    # argparser.add_argument(
+    #     '-t', '--train-epoch',
+    #     default=100,
+    #     type=int,
+    #     help='Times of train.')
+    # argparser.add_argument(
+    #     '--vaealpha',
+    #     default=1,
+    #     type=int,
+    #     help='Times of train.')
+    # argparser.add_argument(
+    #     '--mse-weight',
+    #     default=0.01,
+    #     type=float,
+    #     help='Weight of MSE.')
+    # argparser.add_argument(
+    #     '--name',
+    #     default=0.01,
+    #     type=float,
+    #     help='Weight of MSE.')
+    # argparser.add_argument('--include-throttle', action='store_true', default=False, help='Include Throttle')
+        
+    args = argparser.parse_args()
+
     benchmark_model(
-        encoder_path='models/64x64/encoder.h5',
+        args, 
+        encoder_path='models/64x64/encoder_' + args.name + '.h5',
         epochs=15,
         batch_size=64,
         output_dir='models/64x64',

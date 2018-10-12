@@ -259,7 +259,8 @@ class SortedNumberGenerator(object):
     def next(self):
 
         # Build sentences
-        image_labels = np.zeros((self.batch_size, self.terms + self.predict_terms))
+        image_labels = np.zeros((self.batch_size, self.terms + self.predict_terms + self.predict_terms))
+        # true_image_labels = np.zeros((self.batch_size, self.terms + self.predict_terms))
         sentence_labels = np.ones((self.batch_size, 1)).astype('int32')
         positive_samples_n = self.positive_samples
         for b in range(self.batch_size):
@@ -267,7 +268,8 @@ class SortedNumberGenerator(object):
             # Set ordered predictions for positive samples
             seed = np.random.randint(0, 10)
             sentence = np.mod(np.arange(seed, seed + self.terms + self.predict_terms), 10)
-
+            # true_sentence = np.copy(sentence)
+            sentence = np.concatenate([sentence, sentence[-self.predict_terms:]], axis=0)
             if positive_samples_n <= 0:
 
                 # Set random predictions for negative samples
@@ -281,21 +283,24 @@ class SortedNumberGenerator(object):
 
             # Save sentence
             image_labels[b, :] = sentence
-
+            # true_image_labels[b, :] = true_sentence
             positive_samples_n -= 1
 
         # Retrieve actual images
         images, _ = self.mnist_handler.get_batch_by_labels(self.subset, image_labels.flatten(), self.image_size, self.color, self.rescale)
+        # true_images, _ = self.mnist_handler.get_batch_by_labels(self.subset, true_image_labels.flatten(), self.image_size, self.color, self.rescale)
 
         # Assemble batch
-        images = images.reshape((self.batch_size, self.terms + self.predict_terms, images.shape[1], images.shape[2], images.shape[3]))
-        x_images = images[:, :-self.predict_terms, ...]
+        images = images.reshape((self.batch_size, self.terms + self.predict_terms + self.predict_terms, images.shape[1], images.shape[2], images.shape[3]))
+        # true_images = true_images.reshape((self.batch_size, self.terms + self.predict_terms, true_images.shape[1], true_images.shape[2], true_images.shape[3]))
+        
+        x_images = images[:, :self.terms, ...]
+        z_images = images[:, self.terms: -self.predict_terms, ...]
         y_images = images[:, -self.predict_terms:, ...]
-
         # Randomize
         idxs = np.random.choice(sentence_labels.shape[0], sentence_labels.shape[0], replace=False)
 
-        return [x_images[idxs, ...], y_images[idxs, ...]], sentence_labels[idxs, ...]
+        return [x_images[idxs, ...], y_images[idxs, ...], z_images[idxs, ...]], [sentence_labels[idxs, ...], np.zeros((self.batch_size, 1))]
 
 
 class SameNumberGenerator(object):
