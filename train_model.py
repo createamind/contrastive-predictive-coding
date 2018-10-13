@@ -58,13 +58,13 @@ def network_autoregressive(args, x):
     return x
 
 
-def network_prediction(context, code_size, predict_terms):
+def network_prediction(context, code_size, predict_terms, name='z'):
 
     ''' Define the network mapping context to multiple embeddings '''
 
     outputs = []
     for i in range(predict_terms):
-        outputs.append(keras.layers.Dense(units=code_size, activation="linear", name='z_t_{i}'.format(i=i))(context))
+        outputs.append(keras.layers.Dense(units=code_size, activation="linear", name=name+'_t_{i}'.format(i=i))(context))
 
     if len(outputs) == 1:
         output = keras.layers.Lambda(lambda x: K.expand_dims(x, axis=1))(outputs[0])
@@ -86,9 +86,11 @@ class CPCLayer(keras.layers.Layer):
         # Compute dot product among vectors
         preds, y_encoded = inputs
 
+        # dot_product = K.mean((y_encoded  - preds ) * (y_encoded - preds), axis=-1)
         dot_product = K.mean(y_encoded * preds, axis=-1)
         dot_product = K.mean(dot_product, axis=-1, keepdims=True)  # average along the temporal dimension
 
+    
         # Keras loss functions take probabilities
         dot_product_probs = K.sigmoid(dot_product)
 
@@ -109,6 +111,7 @@ class MSELayer(keras.layers.Layer):
 
         # Compute dot product among vectors
         preds, z_encoded = inputs
+        # preds = K.print_tensor(preds, message='preds = ')
         ans = K.mean((z_encoded - preds) * (z_encoded - preds), axis=-1)
         ans = K.mean(ans, axis=-1, keepdims=True)  # average along the temporal dimension
 
@@ -137,16 +140,20 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     context = network_autoregressive(args, x_encoded)
     preds = network_prediction(context, code_size, predict_terms)
 
+    preds_for_mse = network_prediction(context, code_size, predict_terms, 'mse')
+
     y_input = keras.layers.Input((predict_terms, image_shape[0], image_shape[1], image_shape[2]))
     y_encoded = keras.layers.TimeDistributed(encoder_model)(y_input)
 
+    # preds = K.print_tensor(preds, message='preds = ')
     # Loss
     dot_product_probs = CPCLayer()([preds, y_encoded])
 
     z_input = keras.layers.Input((predict_terms, image_shape[0], image_shape[1], image_shape[2]))
     z_encoded = keras.layers.TimeDistributed(encoder_model)(z_input)
 
-    mse = MSELayer()([preds, z_encoded])
+    mse = MSELayer()([preds_for_mse, z_encoded])
+
 
     # Model
     cpc_model = keras.models.Model(inputs=[x_input, y_input, z_input], outputs=[dot_product_probs, mse])
