@@ -1,10 +1,3 @@
-'''
-This module describes the contrastive predictive coding model from DeepMind:
-
-Oord, Aaron van den, Yazhe Li, and Oriol Vinyals.
-"Representation Learning with Contrastive Predictive Coding."
-arXiv preprint arXiv:1807.03748 (2018).
-'''
 from data_utils import SortedNumberGenerator
 from os.path import join, basename, dirname, exists
 import datetime
@@ -16,14 +9,198 @@ session = tf.Session(config=config)
 
 import keras
 from keras import backend as K
+from keras.models import Sequential, Model
+from keras.layers.merge import _Merge
+from keras.layers import Input, Dense, Reshape, Flatten, Dropout
+from keras.layers import BatchNormalization, Activation, ZeroPadding2D
+from keras.layers.advanced_activations import LeakyReLU
+from keras.layers.convolutional import UpSampling2D, Conv2D
+from keras.optimizers import RMSprop
+
+from tqdm import tqdm
+import random
+from functools import partial
+
+
+
+class RandomWeightedAverage(_Merge):
+    """Provides a (random) weighted average between real and generated image samples"""
+    def _merge_function(self, inputs):
+        alpha = K.random_uniform((32, 1, 1, 1))
+        return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
+
+class WGANGP():
+    def __init__(self, args, encoder, cpc):
+        self.img_rows = 28
+        self.img_cols = 28
+        self.channels = 3
+        self.img_shape = (self.img_rows, self.img_cols, self.channels)
+        self.latent_dim = args.code_size
+        self.predict_terms = args.predict_terms
+
+        # Following parameter and optimizer set as recommended in paper
+        self.n_critic = 5
+        optimizer = RMSprop(lr=0.00005)
+
+        # Build the generator and critic
+        self.generator = self.build_generator()
+        self.critic = self.build_critic()
+
+        #-------------------------------
+        # Construct Computational Graph
+        #       for the Critic
+        #-------------------------------
+
+        # Freeze generator's layers while training critic
+        self.generator.trainable = False
+
+        # Image input (real sample)
+        real_img = Input(shape=self.img_shape)
+
+        # Noise input
+        z_disc = Input(shape=(self.latent_dim, ))
+        pred = Input(shape=(self.latent_dim, ))
+        z_disc = K.concatenate([z_disc, pred], axis=-1)
+        # Generate image based of noise (fake sample)
+        fake_img = self.generatorz(z_disc)
+
+        # Discriminator determines validity of the real and fake images
+        fake = self.critic(fake_img)
+        valid = self.critic(real_img)
+
+        # Construct weighted average between real and fake images
+        interpolated_img = RandomWeightedAverage()([real_img, fake_img])
+        # Determine validity of weighted sample
+        validity_interpolated = self.critic(interpolated_img)
+
+        # Use Python partial to provide loss function with additional
+        # 'averaged_samples' argument
+        partial_gp_loss = partial(self.gradient_penalty_loss,
+                          averaged_samples=interpolated_img)
+        partial_gp_loss.__name__ = 'gradient_penalty' # Keras requires function names
+
+        self.critic_model = Model(inputs=[real_img, z_disc, pred],
+                            outputs=[valid, fake, validity_interpolated])
+        self.critic_model.compile(loss=[self.wasserstein_loss,
+                                              self.wasserstein_loss,
+                                              partial_gp_loss],
+                                        optimizer=optimizer,
+                                        loss_weights=[1, 1, 10])
+        #-------------------------------
+        # Construct Computational Graph
+        #         for Generator
+        #-------------------------------
+
+        # For the generator we freeze the critic's layers
+        self.critic.trainable = False
+        self.generator.trainable = True
+
+        # Sampled noise for input to generator
+        z_gen = Input(shape=(100,))
+        pred = Input(shape=(100,))
+        z_disc = K.concatenate([z_gen, pred], axis=-1)
+
+        # Generate images based of noise
+        img = self.generator(z_gen)
+        # Discriminator determines validity
+        valid = self.critic(img)
+        # Defines generator model
+
+        z = encoder(img)
+        cpc_loss = cpc([pred, z])
+
+        def useless_loss(yTrue, yPred):
+            return 0
+
+        self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
+        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', useless_loss], loss_weights=[1.0, 1.0, 0.0], optimizer=optimizer)
+
+    def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
+        """
+        Computes gradient penalty based on prediction and weighted real / fake samples
+        """
+        gradients = K.gradients(y_pred, averaged_samples)[0]
+        # compute the euclidean norm by squaring ...
+        gradients_sqr = K.square(gradients)
+        #   ... summing over the rows ...
+        gradients_sqr_sum = K.sum(gradients_sqr,
+                                  axis=np.arange(1, len(gradients_sqr.shape)))
+        #   ... and sqrt
+        gradient_l2_norm = K.sqrt(gradients_sqr_sum)
+        # compute lambda * (1 - ||grad||)^2 still for each single sample
+        gradient_penalty = K.square(1 - gradient_l2_norm)
+        # return the mean as loss over all the batch samples
+        return K.mean(gradient_penalty)
+
+
+    def wasserstein_loss(self, y_true, y_pred):
+        return K.mean(y_true * y_pred)
+
+    def build_generator(self):
+
+        model = Sequential()
+
+        model.add(Dense(128 * 7 * 7, activation="relu", input_dim=self.latent_dim))
+        model.add(Reshape((7, 7, 128)))
+        model.add(UpSampling2D())
+        model.add(Conv2D(128, kernel_size=4, padding="same"))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Activation("relu"))
+        model.add(UpSampling2D())
+        model.add(Conv2D(64, kernel_size=4, padding="same"))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(Activation("relu"))
+        model.add(Conv2D(self.channels, kernel_size=4, padding="same"))
+        model.add(Activation("tanh"))
+
+        model.summary()
+
+        noise = Input(shape=(self.latent_dim,))
+        img = model(noise)
+
+        return Model(noise, img)
+
+    def build_critic(self):
+
+        model = Sequential()
+
+        model.add(Conv2D(16, kernel_size=3, strides=2, input_shape=self.img_shape, padding="same"))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.25))
+        model.add(Conv2D(32, kernel_size=3, strides=2, padding="same"))
+        model.add(ZeroPadding2D(padding=((0,1),(0,1))))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.25))
+        model.add(Conv2D(64, kernel_size=3, strides=2, padding="same"))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.25))
+        model.add(Conv2D(128, kernel_size=3, strides=1, padding="same"))
+        model.add(BatchNormalization(momentum=0.8))
+        model.add(LeakyReLU(alpha=0.2))
+        model.add(Dropout(0.25))
+        model.add(Flatten())
+        model.add(Dense(1))
+
+        model.summary()
+
+        img = Input(shape=self.img_shape)
+        validity = model(img)
+
+        return Model(img, validity)
+
+
+
+
 
 def network_encoder(x, code_size):
 
     ''' Define the network mapping images to embeddings '''
 
-    x = keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, activation='linear')(x)
-    x = keras.layers.BatchNormalization()(x)
-    x = keras.layers.LeakyReLU()(x)
+    # x = keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, activation='linear')(x)
+    # x = keras.layers.BatchNormalization()(x)
+    # x = keras.layers.LeakyReLU()(x)
     x = keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, activation='linear')(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.LeakyReLU()(x)
@@ -41,18 +218,11 @@ def network_encoder(x, code_size):
 
     return x
 
-
-def network_autoregressive(args, x):
+def network_autoregressive(x):
 
     ''' Define the network that integrates information along the sequence '''
 
-    # x = keras.layers.GRU(units=256, return_sequences=True)(x)
-    # x = keras.layers.BatchNormalization()(x)
-
-    if args.doctor:
-        x = keras.layers.LSTM(units=256, return_states=True, return_sequences=False, name='ar_context')(x)[1]
-    else:
-        x = keras.layers.GRU(units=256, return_sequences=False, name='ar_context')(x)
+    x = keras.layers.GRU(units=256, return_sequences=False, name='ar_context')(x)
 
     return x
 
@@ -89,7 +259,6 @@ class CPCLayer(keras.layers.Layer):
         # dot_product = K.mean(K.l2_normalize(y_encoded, axis=-1) * K.l2_normalize(preds, axis=-1), axis=-1)
         dot_product = K.mean(y_encoded * preds, axis=-1)
         dot_product = K.mean(dot_product, axis=-1, keepdims=True)  # average along the temporal dimension
-
     
         # Keras loss functions take probabilities
         dot_product_probs = K.sigmoid(dot_product)
@@ -100,27 +269,11 @@ class CPCLayer(keras.layers.Layer):
         return (input_shape[0][0], 1)
 
 
-class MSELayer(keras.layers.Layer):
 
-    ''' Computes dot product between true and predicted embedding vectors '''
 
-    def __init__(self, **kwargs):
-        super(MSELayer, self).__init__(**kwargs)
 
-    def call(self, inputs):
 
-        # Compute dot product among vectors
-        preds, z_encoded = inputs
-        preds = K.print_tensor(preds, message='preds = ')
-        z_encoded = K.print_tensor(z_encoded, message='z_encoded = ')
 
-        ans = K.mean((z_encoded - preds) * (z_encoded - preds), axis=-1)
-        ans = K.mean(ans, axis=-1, keepdims=True)  # average along the temporal dimension
-
-        return ans
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0][0], 1)
 
 
 def network_cpc(args, alpha, image_shape, terms, predict_terms, code_size, learning_rate):
@@ -139,50 +292,38 @@ def network_cpc(args, alpha, image_shape, terms, predict_terms, code_size, learn
     # Define rest of model
     x_input = keras.layers.Input((terms, image_shape[0], image_shape[1], image_shape[2]))
     x_encoded = keras.layers.TimeDistributed(encoder_model)(x_input)
-    # x_encoded = K.print_tensor(x_encoded, message='encodes = ')
 
-    context = network_autoregressive(args, x_encoded)
+    context = network_autoregressive(x_encoded)
     preds = network_prediction(context, code_size, predict_terms)
-
-    preds_for_mse = network_prediction(context, code_size, predict_terms, 'mse')
 
     y_input = keras.layers.Input((predict_terms, image_shape[0], image_shape[1], image_shape[2]))
     y_encoded = keras.layers.TimeDistributed(encoder_model)(y_input)
 
     # Loss
-    dot_product_probs = CPCLayer()([preds, y_encoded])
-
-    z_input = keras.layers.Input((predict_terms, image_shape[0], image_shape[1], image_shape[2]))
-    z_encoded = keras.layers.TimeDistributed(encoder_model)(z_input)
-
-    mse = MSELayer()([preds_for_mse, z_encoded])
+    cpc_layer = CPCLayer()
+    dot_product_probs = cpc_layer([preds, y_encoded])
 
 
     # Model
-    cpc_model = keras.models.Model(inputs=[x_input, y_input, z_input], outputs=[dot_product_probs, mse])
-    # Compile model
+    cpc_model = keras.models.Model(inputs=[x_input, y_input], outputs=[preds, dot_product_probs])
 
+
+    # Compile model
     cpc_model.compile(
         optimizer=keras.optimizers.Adam(lr=learning_rate),
-        loss={
-            'cpc_layer_1': 'binary_crossentropy',
-            'mse_layer_1': 'mean_absolute_error'
-        },
-        loss_weights={
-            'cpc_layer_1': 1.,
-            'mse_layer_1': alpha
-        },
-        metrics={
-            'cpc_layer_1': 'binary_accuracy',
-            'mse_layer_1': 'mae'
-        }
+        loss='binary_crossentropy',
+        metrics=['binary_accuracy']
     )
     cpc_model.summary()
 
-    return cpc_model
+
+    encoder_model.trainable = False
+    cpc_layer.trainable = False
+
+    return (cpc_model, encoder_model, cpc_layer)
 
 
-def train_model(args, epochs, batch_size, output_dir, code_size, lr=1e-4, terms=4, predict_terms=4, image_size=28, color=False):
+def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predict_terms=4, image_size=28, color=False):
 
     # Prepare data
     train_data = SortedNumberGenerator(batch_size=batch_size, subset='train', terms=terms,
@@ -197,99 +338,198 @@ def train_model(args, epochs, batch_size, output_dir, code_size, lr=1e-4, terms=
     alpha = K.variable(args.mse_weight)
     alpha = K.print_tensor(alpha, message='alpha = ')
 
-    model = network_cpc(args, alpha, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
+    model, encoder, cpc = network_cpc(args, alpha, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
                         code_size=code_size, learning_rate=lr)
+    gan = WGANGP(args, encoder, cpc)
+
+    session = K.get_session()
+
+    #All placeholders for Tensorboard
+    train_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('train/loss', train_loss_ph)
+
+    val_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('val/loss', val_loss_ph)
+
+    train_acc_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('train/acc', train_acc_ph)
+
+    val_acc_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('val/acc', val_acc_ph)
+
+    g_train_loss_critic_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('train/generator/critic_loss', g_train_loss_critic_ph)
+
+    g_train_loss_cpc_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('train/generator/cpc_loss', g_train_loss_cpc_ph)
+
+    d_train_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('train/dis/loss', d_train_loss_ph)
+
+    g_test_loss_critic_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('test/generator/critic_loss', g_test_loss_critic_ph)
+
+    g_test_loss_cpc_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('test/generator/cpc_loss', g_test_loss_cpc_ph)
+
+    d_test_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
+    tf.summary.scalar('test/dis/loss', d_test_loss_ph)
+
+    raw_train_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    raw_train_image_ph = tf.cast((tf.clip_by_value(raw_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
+    tf.summary('train/raw', raw_train_image_ph)
+
+    recon_train_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    recon_train_image_ph = tf.cast((tf.clip_by_value(recon_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
+    tf.summary('train/recon', recon_train_image_ph)
+
+    raw_test_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    raw_test_image_ph = tf.cast((tf.clip_by_value(raw_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
+    tf.summary('test/raw', raw_test_image_ph)
+
+    recon_test_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    recon_test_image_ph = tf.cast((tf.clip_by_value(recon_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
+    tf.summary('test/recon', recon_test_image_ph)
+
+    merged = tf.summary.merge_all()
+    writer = tf.summary.FileWriter('./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S '))
 
 
-    class MyCallback(keras.callbacks.Callback):
-        def __init__(self, alpha):
-            self.alpha = alpha
+    if len(args.load_path) > 0:
+        model = keras.models.load_model(args.load_path)
 
-        def on_epoch_end(self, epoch, logs={}):
-            if epoch > 15:
-                self.alpha = 100
-            print(self.alpha)
-                
-    # Callbacks
-    callbacks = [
-        # keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=1/3, patience=2, min_lr=1e-4),
-        MyCallback(alpha),
-        keras.callbacks.TensorBoard(log_dir='./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S ') , histogram_freq=0, batch_size=32, write_graph=False, write_grads=False, write_images=False, embeddings_freq=0, embeddings_layer_names=None, embeddings_metadata=None, embeddings_data=None, update_freq='epoch')
-    ]
+    else:
+        print('Start Training CPC')
+        for epoch in tqdm(range(args.cpc_epochs)):
+            for i in range(len(train_data)):
+                train_batch = next(train_data)
+                train_result = model.train_on_batch(train_batch[0], train_batch[1])
 
-    # Trains the model
-    model.fit_generator(
-        generator=train_data,
-        steps_per_epoch=len(train_data),
-        validation_data=validation_data,
-        validation_steps=len(validation_data),
-        epochs=epochs,
-        verbose=1,
-        callbacks=callbacks
-    )
+            for i in range(len(validation_data)):
+                validation_batch = next(validation_data)
+                validation_result = model.test_on_batch(validation_batch[0], validation_batch[1])
 
-    # Saves the model
-    # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
-    model.save(join(output_dir, args.name + '.h5'))
+            summary = session.run(merged,
+                                feed_dict={train_loss_ph: train_result[0],
+                                            val_loss_ph: validation_result[0],
+                                            train_acc_ph: train_result[1],
+                                            val_acc_ph: validation_result[1]
+                                            })
 
-    # Saves the encoder alone
-    encoder = model.layers[1].layer
-    encoder.save(join(output_dir, 'encoder_' + args.name + '.h5'))
+            writer.add_summary(summary, epoch)
+            writer.flush()
+        
+
+        # Saves the model
+        # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
+        model.save(join(output_dir, args.name + '.h5'))
+
+        # Saves the encoder alone
+        encoder = model.layers[1].layer
+        encoder.save(join(output_dir, 'encoder_' + args.name + '.h5'))
+
+
+    print('Start Training GAN')
+
+    # Adversarial ground truths
+    valid = -np.ones((batch_size, 1))
+    fake =  np.ones((batch_size, 1))
+    dummy = np.zeros((batch_size, 1)) # Dummy gt for gradient penalty
+
+    # self.critic_model = Model(inputs=[real_img, z_disc, pred],
+    #                     outputs=[valid, fake, validity_interpolated])
+    # self.critic_model.compile(loss=[self.wasserstein_loss,
+    #                                       self.wasserstein_loss,
+    #                                       partial_gp_loss],
+    #                                 optimizer=optimizer,
+    #                                 loss_weights=[1, 1, 10])
+    
+    # self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss])
+    # self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', useless_loss], loss_weights=[1.0, 1.0, 0.0], optimizer=optimizer)
+
+    for epoch in tqdm(range(args.gan_epochs)):
+
+        for i in range(len(train_data)):
+            train_batch = next(train_data)
+
+            preds, _ = model(train_batch[0])
+
+            for _ in range(5):
+                noise = np.random.normal(0, 1, (batch_size, args.code_size))
+                image = train_batch[0, 0, :, random.randint(0,3)]
+                d_loss = gan.critic_model.train_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
+
+            image = train_batch[0, 1, :, 0]
+            g_loss = gan.generator_model.train_on_batch([noise, preds[:, 0]], [valid, fake])
+            _, _, recon = gan.generator_model([noise, preds[:, 0]])
+
+        
+        summary = session.run(merged,
+                        feed_dict={g_train_loss_critic_ph: g_loss[1],
+                                    g_train_loss_cpc_ph: g_loss[2],
+                                    d_train_loss_ph: d_loss[0],
+                                    raw_train_image_ph: image[0],
+                                    recon_train_image_ph: recon[0]
+                                })
+
+
+        for i in range(len(validation_data)):
+            validation_batch = next(validation_data)
+
+            preds, _ = model(validation_batch[0])
+            noise = np.random.normal(0, 1, (batch_size, args.code_size))
+            image = validation_batch[0, 1, :, 0]
+            d_loss = gan.critic_model.test_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
+            g_loss = gan.generator_model.test_on_batch([noise, preds[:, 0]], [valid, fake])
+            _, _, recon = gan.generator_model([noise, preds[:, 0]])
+
+
+
+        summary = session.run(merged,
+                        feed_dict={g_test_loss_critic_ph: g_loss[1],
+                                    g_test_loss_cpc_ph: g_loss[2],
+                                    d_test_loss_ph: d_loss[0],
+                                    raw_test_image_ph: image[0],
+                                    recon_test_image_ph: recon[0]
+                                })
+
+        writer.add_summary(summary, epoch)
+        writer.flush()
+
 
 
 if __name__ == "__main__":
 
     argparser = argparse.ArgumentParser(
         description='CPC')
-    # argparser.add_argument(
-    #     '--host',
-    #     metavar='H',
-    #     default='localhost',
-    #     help='IP of the host server (default: localhost)')
     argparser.add_argument(
         '--name',
         default='cpc',
         help='name')
     argparser.add_argument(
-        '-e', '--epochs',
+        '--load-path',
+        default='',
+        help='loadpath')
+    argparser.add_argument(
+        '-e', '--cpc-epochs',
         default=15,
         type=int,
-        help='epochs')
+        help='cpc epochs')
+    argparser.add_argument(
+        '-g', '--gan-epochs',
+        default=15,
+        type=int,
+        help='gan epochs')
     argparser.add_argument(
         '--lr',
         default=1e-3,
         type=float,
         help='Learning rate')
-    # argparser.add_argument(
-    #     '-i', '--image-size',
-    #     default=160,
-    #     type=int,
-    #     help='Size of images (default: 320).')
-    # argparser.add_argument(
-    #     '-b', '--batch-size',
-    #     default=32,
-    #     type=int,
-    #     help='Size of batches.')
-    # argparser.add_argument(
-    #     '-t', '--train-epoch',
-    #     default=100,
-    #     type=int,
-    #     help='Times of train.')
-    # argparser.add_argument(
-    #     '--vaealpha',
-    #     default=1,
-    #     type=int,
-    #     help='Times of train.')
     argparser.add_argument(
         '--mse-weight',
         default=0.01,
         type=float,
         help='Weight of MSE.')
-    # argparser.add_argument(
-    #     '--name',
-    #     default=0.01,
-    #     type=float,
-    #     help='Weight of MSE.')
     argparser.add_argument('--doctor', action='store_true', default=False, help='Doctor')
         
     args = argparser.parse_args()
@@ -298,16 +538,19 @@ if __name__ == "__main__":
         predict_terms = 1
     else:
         predict_terms = 1
+
+    args.predict_terms = predict_terms
+    args.code_size = 10
+
     train_model(
         args, 
-        epochs=args.epochs,
         batch_size=32,
         output_dir='models/64x64',
-        code_size=10,
+        code_size=args.code_size,
         lr=args.lr,
         terms=4,
         predict_terms=predict_terms,
-        image_size=64,
+        image_size=28,
         color=True
     )
 

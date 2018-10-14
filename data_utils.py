@@ -300,7 +300,8 @@ class SortedNumberGenerator(object):
         # Randomize
         idxs = np.random.choice(sentence_labels.shape[0], sentence_labels.shape[0], replace=False)
 
-        return [x_images[idxs, ...], y_images[idxs, ...], z_images[idxs, ...]], [sentence_labels[idxs, ...], np.zeros((self.batch_size, 1))]
+        # return [x_images[idxs, ...], y_images[idxs, ...], z_images[idxs, ...]], [sentence_labels[idxs, ...], np.zeros((self.batch_size, 1))]
+        return [x_images[idxs, ...], y_images[idxs, ...]], sentence_labels[idxs, ...]
 
 
 class SameNumberGenerator(object):
