@@ -17,7 +17,6 @@ session = tf.Session(config=config)
 import keras
 from keras import backend as K
 
-
 def network_encoder(x, code_size):
 
     ''' Define the network mapping images to embeddings '''
@@ -86,7 +85,8 @@ class CPCLayer(keras.layers.Layer):
         # Compute dot product among vectors
         preds, y_encoded = inputs
 
-        # dot_product = K.mean((y_encoded  - preds ) * (y_encoded - preds), axis=-1)
+        # dot_product = K.mean(20 - K.abs(y_encoded  - preds) * (y_encoded - preds), axis=-1)
+        # dot_product = K.mean(K.l2_normalize(y_encoded, axis=-1) * K.l2_normalize(preds, axis=-1), axis=-1)
         dot_product = K.mean(y_encoded * preds, axis=-1)
         dot_product = K.mean(dot_product, axis=-1, keepdims=True)  # average along the temporal dimension
 
@@ -111,7 +111,9 @@ class MSELayer(keras.layers.Layer):
 
         # Compute dot product among vectors
         preds, z_encoded = inputs
-        # preds = K.print_tensor(preds, message='preds = ')
+        preds = K.print_tensor(preds, message='preds = ')
+        z_encoded = K.print_tensor(z_encoded, message='z_encoded = ')
+
         ans = K.mean((z_encoded - preds) * (z_encoded - preds), axis=-1)
         ans = K.mean(ans, axis=-1, keepdims=True)  # average along the temporal dimension
 
@@ -121,7 +123,7 @@ class MSELayer(keras.layers.Layer):
         return (input_shape[0][0], 1)
 
 
-def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rate):
+def network_cpc(args, alpha, image_shape, terms, predict_terms, code_size, learning_rate):
 
     ''' Define the CPC network combining encoder and autoregressive model '''
 
@@ -137,6 +139,8 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     # Define rest of model
     x_input = keras.layers.Input((terms, image_shape[0], image_shape[1], image_shape[2]))
     x_encoded = keras.layers.TimeDistributed(encoder_model)(x_input)
+    # x_encoded = K.print_tensor(x_encoded, message='encodes = ')
+
     context = network_autoregressive(args, x_encoded)
     preds = network_prediction(context, code_size, predict_terms)
 
@@ -145,7 +149,6 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     y_input = keras.layers.Input((predict_terms, image_shape[0], image_shape[1], image_shape[2]))
     y_encoded = keras.layers.TimeDistributed(encoder_model)(y_input)
 
-    # preds = K.print_tensor(preds, message='preds = ')
     # Loss
     dot_product_probs = CPCLayer()([preds, y_encoded])
 
@@ -158,6 +161,7 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     # Model
     cpc_model = keras.models.Model(inputs=[x_input, y_input, z_input], outputs=[dot_product_probs, mse])
     # Compile model
+
     cpc_model.compile(
         optimizer=keras.optimizers.Adam(lr=learning_rate),
         loss={
@@ -166,7 +170,7 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
         },
         loss_weights={
             'cpc_layer_1': 1.,
-            'mse_layer_1': args.mse_weight
+            'mse_layer_1': alpha
         },
         metrics={
             'cpc_layer_1': 'binary_accuracy',
@@ -190,13 +194,27 @@ def train_model(args, epochs, batch_size, output_dir, code_size, lr=1e-4, terms=
                                             image_size=image_size, color=color, rescale=True)
 
     # Prepares the model
-    model = network_cpc(args, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
+    alpha = K.variable(args.mse_weight)
+    alpha = K.print_tensor(alpha, message='alpha = ')
+
+    model = network_cpc(args, alpha, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
                         code_size=code_size, learning_rate=lr)
 
+
+    class MyCallback(keras.callbacks.Callback):
+        def __init__(self, alpha):
+            self.alpha = alpha
+
+        def on_epoch_end(self, epoch, logs={}):
+            if epoch > 15:
+                self.alpha = 100
+            print(self.alpha)
+                
     # Callbacks
     callbacks = [
         # keras.callbacks.ReduceLROnPlateau(monitor='val_loss', factor=1/3, patience=2, min_lr=1e-4),
-        keras.callbacks.TensorBoard(log_dir='./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S ') , histogram_freq=0, batch_size=32, write_graph=True, write_grads=False, write_images=False, embeddings_freq=0, embeddings_layer_names=None, embeddings_metadata=None, embeddings_data=None, update_freq='epoch')
+        MyCallback(alpha),
+        keras.callbacks.TensorBoard(log_dir='./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S ') , histogram_freq=0, batch_size=32, write_graph=False, write_grads=False, write_images=False, embeddings_freq=0, embeddings_layer_names=None, embeddings_metadata=None, embeddings_data=None, update_freq='epoch')
     ]
 
     # Trains the model
@@ -234,7 +252,7 @@ if __name__ == "__main__":
         help='name')
     argparser.add_argument(
         '-e', '--epochs',
-        default=10,
+        default=15,
         type=int,
         help='epochs')
     argparser.add_argument(
@@ -285,7 +303,7 @@ if __name__ == "__main__":
         epochs=args.epochs,
         batch_size=32,
         output_dir='models/64x64',
-        code_size=128,
+        code_size=10,
         lr=args.lr,
         terms=4,
         predict_terms=predict_terms,
