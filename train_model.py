@@ -23,6 +23,9 @@ from functools import partial
 import numpy as np
 import sys
 
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 class RandomWeightedAverage(_Merge):
     """Provides a (random) weighted average between real and generated image samples"""
@@ -342,85 +345,92 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                         code_size=code_size, learning_rate=lr)
     gan = WGANGP(args, encoder, cpc)
 
-    session = K.get_session()
+    session = tf.Session()
 
     #All placeholders for Tensorboard
     train_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('train/loss', train_loss_ph)
+    m1_1 = tf.summary.scalar('train/loss', train_loss_ph)
 
     val_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('val/loss', val_loss_ph)
+    m1_2 = tf.summary.scalar('val/loss', val_loss_ph)
 
     train_acc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('train/acc', train_acc_ph)
+    m1_3 = tf.summary.scalar('train/acc', train_acc_ph)
 
     val_acc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('val/acc', val_acc_ph)
+    # val_acc_ph = K.print_tensor(val_acc_ph, message='val_acc_ph')
+    m1_4 = tf.summary.scalar('val/acc', val_acc_ph)
 
     g_train_loss_critic_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('train/generator/critic_loss', g_train_loss_critic_ph)
+    g_train_loss_critic_ph = tf.Print(g_train_loss_critic_ph, [g_train_loss_critic_ph])
+    m2_1 = tf.summary.scalar('train/generator/critic_loss', g_train_loss_critic_ph)
 
     g_train_loss_cpc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('train/generator/cpc_loss', g_train_loss_cpc_ph)
+    m2_2 = tf.summary.scalar('train/generator/cpc_loss', g_train_loss_cpc_ph)
 
     d_train_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('train/dis/loss', d_train_loss_ph)
+    m2_3 = tf.summary.scalar('train/dis/loss', d_train_loss_ph)
 
     g_test_loss_critic_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('test/generator/critic_loss', g_test_loss_critic_ph)
+    m3_1 = tf.summary.scalar('test/generator/critic_loss', g_test_loss_critic_ph)
 
     g_test_loss_cpc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('test/generator/cpc_loss', g_test_loss_cpc_ph)
+    m3_2 = tf.summary.scalar('test/generator/cpc_loss', g_test_loss_cpc_ph)
 
     d_test_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    tf.summary.scalar('test/dis/loss', d_test_loss_ph)
+    m3_3 = tf.summary.scalar('test/dis/loss', d_test_loss_ph)
 
-    raw_train_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    raw_train_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
+    # raw_train_image_ph = K.print_tensor(raw_train_image_ph, message='raw_train_image_ph')
     raw_train_image_ph = tf.cast((tf.clip_by_value(raw_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary.image('train/raw', raw_train_image_ph)
+    m2_4 = tf.summary.image('train/raw', raw_train_image_ph)
 
-    recon_train_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    recon_train_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
+    recon_train_image_ph = tf.Print(recon_train_image_ph, [recon_train_image_ph])
     recon_train_image_ph = tf.cast((tf.clip_by_value(recon_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary.image('train/recon', recon_train_image_ph)
+    m2_5 = tf.summary.image('train/recon', recon_train_image_ph)
 
-    raw_test_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    raw_test_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
+    raw_test_image_ph = tf.Print(raw_test_image_ph, [raw_test_image_ph])
     raw_test_image_ph = tf.cast((tf.clip_by_value(raw_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary.image('test/raw', raw_test_image_ph)
+    m3_4 = tf.summary.image('test/raw', raw_test_image_ph)
 
-    recon_test_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
+    recon_test_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
+    recon_test_image_ph = tf.Print(recon_test_image_ph, [recon_test_image_ph])
     recon_test_image_ph = tf.cast((tf.clip_by_value(recon_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary.image('test/recon', recon_test_image_ph)
+    m3_5 = tf.summary.image('test/recon', recon_test_image_ph)
 
-    merged = tf.summary.merge_all()
+    merged1 = tf.summary.merge([m1_1, m1_2, m1_3, m1_4])
+    merged2 = tf.summary.merge([m2_1, m2_2, m2_3, m2_4, m2_5])
+    merged3 = tf.summary.merge([m3_1, m3_2, m3_3, m3_4, m3_5])
+
     writer = tf.summary.FileWriter('./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S '))
 
 
-    if len(args.load_path) > 0:
-        model = keras.models.load_model(args.load_path)
+    if len(args.load_name) > 0:
+        model = keras.models.load_model(join(output_dir, args.load_name))
 
     else:
         print('Start Training CPC')
-        for epoch in range(args.cpc_epochs):
-            for i in range(len(train_data)):
+        for epoch in range(args.cpc_epochs // 10):
+            for i in range(len(train_data) // 50):
                 train_batch = next(train_data)
-                train_result = model.train_on_batch(train_batch[0], train_batch[1])
+                train_result = model.train_on_batch(train_batch[0][:2], train_batch[1])
                 sys.stdout.write(
-                    '\r {} / {}'.format(i, len(train_data)))
+                    '\r Epoch {}: training[{} / {}]'.format(epoch, i, len(train_data)))
 
-            for i in range(len(validation_data)):
+            for i in range(len(validation_data) // 50):
                 validation_batch = next(validation_data)
-                validation_result = model.test_on_batch(validation_batch[0], validation_batch[1])
+                validation_result = model.test_on_batch(validation_batch[0][:2], validation_batch[1])
                 sys.stdout.write(
-                    '\r {} / {}'.format(i, len(validation_data)))
+                    '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
 
-            summary = session.run(merged,
+            summary = session.run(merged1,
                                 feed_dict={train_loss_ph: train_result[0],
                                             val_loss_ph: validation_result[0],
                                             train_acc_ph: train_result[1],
                                             val_acc_ph: validation_result[1]
                                             })
-
-            
 
             writer.add_summary(summary, epoch)
             writer.flush()
@@ -434,13 +444,11 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
         encoder = model.layers[1].layer
         encoder.save(join(output_dir, 'encoder_' + args.name + '.h5'))
 
-
-    print('Start Training GAN')
-
+    print('\nStart Training GAN')
     # Adversarial ground truths
     valid = -np.ones((batch_size, 1))
     fake =  np.ones((batch_size, 1))
-    cpc_true =  np.ones((batch_size, 1))
+    cpc_true = np.ones((batch_size, 1))
     dummy = np.zeros((batch_size, 1)) # Dummy gt for gradient penalty
 
     # self.critic_model = Model(inputs=[real_img, z_disc, pred],
@@ -449,54 +457,72 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     for epoch in range(args.gan_epochs):
 
-        for i in range(len(train_data)):
+        for i in range(len(train_data) // 50):
             train_batch = next(train_data)
 
-            preds, _ = model(train_batch[0])
+            preds, _ = model.predict(train_batch[0][:2], batch_size=batch_size)
 
             for _ in range(5):
                 noise = np.random.normal(0, 1, (batch_size, args.code_size))
-                image = train_batch[0, 0, :, random.randint(0,3)]
+                image = train_batch[0][0][:, random.randint(0,3)]
                 d_loss = gan.critic_model.train_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
 
-            image = train_batch[0, 1, :, 0]
+            image = train_batch[0][2][:, 0]
             g_loss = gan.generator_model.train_on_batch([noise, preds[:, 0]], [valid, cpc_true])
-            _, _, recon = gan.generator_model([noise, preds[:, 0]])
-
-        
-        summary = session.run(merged,
+            _, _, recon = gan.generator_model.predict([noise, preds[:, 0]], batch_size=batch_size)
+            sys.stdout.write(
+                '\r Epoch {}: train[{} / {}]'.format(epoch, i, len(train_data)))
+        summary = session.run(merged2,
                         feed_dict={g_train_loss_critic_ph: g_loss[1],
                                     g_train_loss_cpc_ph: g_loss[2],
                                     d_train_loss_ph: d_loss[0],
-                                    raw_train_image_ph: image[0],
-                                    recon_train_image_ph: recon[0]
+                                    raw_train_image_ph: image[:1],
+                                    recon_train_image_ph: recon[:1]
                                 })
+
+        # print(image[0].shape) 
+        #plot
+        fig = plt.figure()
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax1.imshow(image[0] * 0.5 + 0.5)
+        ax2.imshow(recon[0] * 0.5 + 0.5)
+        plt.show()
+
         writer.add_summary(summary, epoch)
+        writer.flush()
 
-
-        for i in range(len(validation_data)):
+        for i in range(len(validation_data) // 50):
             validation_batch = next(validation_data)
 
-            preds, _ = model(validation_batch[0])
+
+            preds, _ = model.predict(validation_batch[0][:2], batch_size=batch_size)
             noise = np.random.normal(0, 1, (batch_size, args.code_size))
-            image = validation_batch[0, 1, :, 0]
+            image = validation_batch[0][2][:, 0]
             d_loss = gan.critic_model.test_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
             g_loss = gan.generator_model.test_on_batch([noise, preds[:, 0]], [valid, cpc_true])
-            _, _, recon = gan.generator_model([noise, preds[:, 0]])
+            _, _, recon = gan.generator_model.predict([noise, preds[:, 0]], batch_size=batch_size)
 
+            sys.stdout.write(
+                '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
 
-
-        summary = session.run(merged,
+        summary = session.run(merged3,
                         feed_dict={g_test_loss_critic_ph: g_loss[1],
                                     g_test_loss_cpc_ph: g_loss[2],
                                     d_test_loss_ph: d_loss[0],
-                                    raw_test_image_ph: image[0],
-                                    recon_test_image_ph: recon[0]
+                                    raw_test_image_ph: image[:1],
+                                    recon_test_image_ph: recon[:1]
                                 })
 
         writer.add_summary(summary, epoch)
+        writer.flush()
 
+    # Saves the model
+    # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
+    gan.generator_model.save(join(output_dir, 'generator_' + args.name + '.h5'))
 
+    # Saves the encoder alone
+    gan.critic_model.save(join(output_dir, 'dis_' + args.name + '.h5'))
 
 if __name__ == "__main__":
 
@@ -507,7 +533,7 @@ if __name__ == "__main__":
         default='cpc',
         help='name')
     argparser.add_argument(
-        '--load-path',
+        '--load-name',
         default='',
         help='loadpath')
     argparser.add_argument(
