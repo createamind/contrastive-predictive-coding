@@ -62,7 +62,7 @@ class WGANGP():
         pred = Input(shape=(self.latent_dim, ))
         z_disc = K.concatenate([z_disc, pred], axis=-1)
         # Generate image based of noise (fake sample)
-        fake_img = self.generatorz(z_disc)
+        fake_img = self.generator(z_disc)
 
         # Discriminator determines validity of the real and fake images
         fake = self.critic(fake_img)
@@ -155,7 +155,7 @@ class WGANGP():
 
         model.summary()
 
-        noise = Input(shape=(self.latent_dim,))
+        noise = Input(shape=(self.latent_dim * 2,))
         img = model(noise)
 
         return Model(noise, img)
@@ -276,7 +276,7 @@ class CPCLayer(keras.layers.Layer):
 
 
 
-def network_cpc(args, alpha, image_shape, terms, predict_terms, code_size, learning_rate):
+def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rate):
 
     ''' Define the CPC network combining encoder and autoregressive model '''
 
@@ -334,11 +334,8 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                                             positive_samples=batch_size // 2, predict_terms=predict_terms,
                                             image_size=image_size, color=color, rescale=True)
 
-    # Prepares the model
-    alpha = K.variable(args.mse_weight)
-    alpha = K.print_tensor(alpha, message='alpha = ')
 
-    model, encoder, cpc = network_cpc(args, alpha, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
+    model, encoder, cpc = network_cpc(args, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
                         code_size=code_size, learning_rate=lr)
     gan = WGANGP(args, encoder, cpc)
 
@@ -438,14 +435,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     # self.critic_model = Model(inputs=[real_img, z_disc, pred],
     #                     outputs=[valid, fake, validity_interpolated])
-    # self.critic_model.compile(loss=[self.wasserstein_loss,
-    #                                       self.wasserstein_loss,
-    #                                       partial_gp_loss],
-    #                                 optimizer=optimizer,
-    #                                 loss_weights=[1, 1, 10])
-    
-    # self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss])
-    # self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', useless_loss], loss_weights=[1.0, 1.0, 0.0], optimizer=optimizer)
+    # self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
 
     for epoch in tqdm(range(args.gan_epochs)):
 
@@ -471,6 +461,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                                     raw_train_image_ph: image[0],
                                     recon_train_image_ph: recon[0]
                                 })
+        writer.add_summary(summary, epoch)
 
 
         for i in range(len(validation_data)):
@@ -494,7 +485,6 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                                 })
 
         writer.add_summary(summary, epoch)
-        writer.flush()
 
 
 
@@ -525,11 +515,6 @@ if __name__ == "__main__":
         default=1e-3,
         type=float,
         help='Learning rate')
-    argparser.add_argument(
-        '--mse-weight',
-        default=0.01,
-        type=float,
-        help='Weight of MSE.')
     argparser.add_argument('--doctor', action='store_true', default=False, help='Doctor')
         
     args = argparser.parse_args()
@@ -552,5 +537,5 @@ if __name__ == "__main__":
         predict_terms=predict_terms,
         image_size=28,
         color=True
-    )
+    ) 
 
