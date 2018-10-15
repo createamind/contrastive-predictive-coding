@@ -542,6 +542,14 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
         writer.add_summary(summary, epoch)
         writer.flush()
+
+        if epoch % 10 == 0:
+            fig = plt.figure()
+            ax1 = fig.add_subplot(1, 2, 1)
+            ax2 = fig.add_subplot(1, 2, 2)
+            ax1.imshow(image[0] * 0.5 + 0.5)
+            ax2.imshow(recon[0] * 0.5 + 0.5)
+            plt.savefig('fig/' + args.name + '_epoch' + str(epoch) + '.png')
     
     # Saves the model
     # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
