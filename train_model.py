@@ -20,7 +20,8 @@ from keras.optimizers import RMSprop
 from tqdm import tqdm
 import random
 from functools import partial
-
+import numpy as np
+import sys
 
 
 class RandomWeightedAverage(_Merge):
@@ -60,9 +61,11 @@ class WGANGP():
         # Noise input
         z_disc = Input(shape=(self.latent_dim, ))
         pred = Input(shape=(self.latent_dim, ))
-        z_disc = K.concatenate([z_disc, pred], axis=-1)
+
+        z_disc_con = keras.layers.Lambda(lambda i: K.concatenate([i[0], i[1]], axis=-1))([z_disc, pred])
+
         # Generate image based of noise (fake sample)
-        fake_img = self.generator(z_disc)
+        fake_img = self.generator(z_disc_con)
 
         # Discriminator determines validity of the real and fake images
         fake = self.critic(fake_img)
@@ -96,24 +99,25 @@ class WGANGP():
         self.generator.trainable = True
 
         # Sampled noise for input to generator
-        z_gen = Input(shape=(100,))
-        pred = Input(shape=(100,))
-        z_disc = K.concatenate([z_gen, pred], axis=-1)
+        z_gen = Input(shape=(self.latent_dim,))
+        pred = Input(shape=(self.latent_dim,))
+
+        z_gen_con = keras.layers.Lambda(lambda i: K.concatenate([i[0], i[1]], axis=-1))([z_gen, pred])
 
         # Generate images based of noise
-        img = self.generator(z_gen)
+        img = self.generator(z_gen_con)
         # Discriminator determines validity
         valid = self.critic(img)
         # Defines generator model
 
         z = encoder(img)
-        cpc_loss = cpc([pred, z])
 
-        def useless_loss(yTrue, yPred):
-            return 0
+        tz = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(z)
+        tpred = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(pred)
+        cpc_loss = cpc([tpred, tz])
 
         self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
-        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', useless_loss], loss_weights=[1.0, 1.0, 0.0], optimizer=optimizer)
+        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', None], loss_weights=[1.0, 1.0, 0.0], optimizer=optimizer)
 
     def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
         """
@@ -140,7 +144,7 @@ class WGANGP():
 
         model = Sequential()
 
-        model.add(Dense(128 * 7 * 7, activation="relu", input_dim=self.latent_dim))
+        model.add(Dense(128 * 7 * 7, activation="relu", input_dim=self.latent_dim * 2))
         model.add(Reshape((7, 7, 128)))
         model.add(UpSampling2D())
         model.add(Conv2D(128, kernel_size=4, padding="same"))
@@ -311,8 +315,7 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     # Compile model
     cpc_model.compile(
         optimizer=keras.optimizers.Adam(lr=learning_rate),
-        loss='binary_crossentropy',
-        metrics=['binary_accuracy']
+        loss=[None, 'binary_crossentropy']
     )
     cpc_model.summary()
 
@@ -374,19 +377,19 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     raw_train_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
     raw_train_image_ph = tf.cast((tf.clip_by_value(raw_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary('train/raw', raw_train_image_ph)
+    tf.summary.image('train/raw', raw_train_image_ph)
 
     recon_train_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
     recon_train_image_ph = tf.cast((tf.clip_by_value(recon_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary('train/recon', recon_train_image_ph)
+    tf.summary.image('train/recon', recon_train_image_ph)
 
     raw_test_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
     raw_test_image_ph = tf.cast((tf.clip_by_value(raw_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary('test/raw', raw_test_image_ph)
+    tf.summary.image('test/raw', raw_test_image_ph)
 
     recon_test_image_ph = tf.placeholder(shape=(28,28,3), dtype=tf.float32)
     recon_test_image_ph = tf.cast((tf.clip_by_value(recon_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    tf.summary('test/recon', recon_test_image_ph)
+    tf.summary.image('test/recon', recon_test_image_ph)
 
     merged = tf.summary.merge_all()
     writer = tf.summary.FileWriter('./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S '))
@@ -397,14 +400,18 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     else:
         print('Start Training CPC')
-        for epoch in tqdm(range(args.cpc_epochs)):
+        for epoch in range(args.cpc_epochs):
             for i in range(len(train_data)):
                 train_batch = next(train_data)
                 train_result = model.train_on_batch(train_batch[0], train_batch[1])
+                sys.stdout.write(
+                    '\r {} / {}'.format(i, len(train_data)))
 
             for i in range(len(validation_data)):
                 validation_batch = next(validation_data)
                 validation_result = model.test_on_batch(validation_batch[0], validation_batch[1])
+                sys.stdout.write(
+                    '\r {} / {}'.format(i, len(validation_data)))
 
             summary = session.run(merged,
                                 feed_dict={train_loss_ph: train_result[0],
@@ -412,6 +419,8 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                                             train_acc_ph: train_result[1],
                                             val_acc_ph: validation_result[1]
                                             })
+
+            
 
             writer.add_summary(summary, epoch)
             writer.flush()
@@ -431,13 +440,14 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
     # Adversarial ground truths
     valid = -np.ones((batch_size, 1))
     fake =  np.ones((batch_size, 1))
+    cpc_true =  np.ones((batch_size, 1))
     dummy = np.zeros((batch_size, 1)) # Dummy gt for gradient penalty
 
     # self.critic_model = Model(inputs=[real_img, z_disc, pred],
     #                     outputs=[valid, fake, validity_interpolated])
     # self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
 
-    for epoch in tqdm(range(args.gan_epochs)):
+    for epoch in range(args.gan_epochs):
 
         for i in range(len(train_data)):
             train_batch = next(train_data)
@@ -450,7 +460,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                 d_loss = gan.critic_model.train_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
 
             image = train_batch[0, 1, :, 0]
-            g_loss = gan.generator_model.train_on_batch([noise, preds[:, 0]], [valid, fake])
+            g_loss = gan.generator_model.train_on_batch([noise, preds[:, 0]], [valid, cpc_true])
             _, _, recon = gan.generator_model([noise, preds[:, 0]])
 
         
@@ -471,7 +481,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
             noise = np.random.normal(0, 1, (batch_size, args.code_size))
             image = validation_batch[0, 1, :, 0]
             d_loss = gan.critic_model.test_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
-            g_loss = gan.generator_model.test_on_batch([noise, preds[:, 0]], [valid, fake])
+            g_loss = gan.generator_model.test_on_batch([noise, preds[:, 0]], [valid, cpc_true])
             _, _, recon = gan.generator_model([noise, preds[:, 0]])
 
 
