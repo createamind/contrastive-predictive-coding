@@ -413,10 +413,10 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     else:
         print('Start Training CPC')
-        for epoch in range(args.cpc_epochs // 10):
+        for epoch in range(args.cpc_epochs // 1):
 
             avg0, avg1, avg2, avg3 = [], [], [], []
-            for i in range(len(train_data) // 10):
+            for i in range(len(train_data) // 1):
                 train_batch = next(train_data)
                 train_result = model.train_on_batch(train_batch[0][:2], train_batch[1])
                 avg0.append(train_result[0])
@@ -424,7 +424,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                 sys.stdout.write(
                     '\r Epoch {}: training[{} / {}]'.format(epoch, i, len(train_data)))
 
-            for i in range(len(validation_data) // 10):
+            for i in range(len(validation_data) // 1):
                 validation_batch = next(validation_data)
                 validation_result = model.test_on_batch(validation_batch[0][:2], validation_batch[1])
                 avg1.append(validation_result[0])
@@ -470,7 +470,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
 
         avg0, avg1, avg2 = [], [], []
-        for i in range(len(train_data) // 10):
+        for i in range(len(train_data) // 1):
             train_batch = next(train_data)
 
             preds, _ = model.predict(train_batch[0][:2], batch_size=batch_size)
@@ -508,7 +508,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
         avg0, avg1, avg2 = [], [], []
 
-        for i in range(len(validation_data) // 10):
+        for i in range(len(validation_data) // 1):
             validation_batch = next(validation_data)
 
 
