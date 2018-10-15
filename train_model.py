@@ -433,7 +433,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                     '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
 
             print('\n%s' % ('-' * 40))
-            print('Train loss: %.2f, Accuracy: %.2f \t Validation loss: %.2f, Accuracy: %.2f' % (np.mean(avg0), np.mean(avg1), np.mean(avg2), np.mean(avg3)))
+            print('Train loss: %.2f, Accuracy: %.2f \t Validation loss: %.2f, Accuracy: %.2f' % (np.mean(avg0), np.mean(avg2), np.mean(avg1), np.mean(avg3)))
             print('%s' % ('-' * 40))
 
             summary = session.run(merged1,
