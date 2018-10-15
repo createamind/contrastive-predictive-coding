@@ -29,8 +29,11 @@ import matplotlib.pyplot as plt
 
 class RandomWeightedAverage(_Merge):
     """Provides a (random) weighted average between real and generated image samples"""
+    def __init__(self, batch_size):
+        super(RandomWeightedAverage, self).__init__()
+        self.batch_size = batch_size
     def _merge_function(self, inputs):
-        alpha = K.random_uniform((32, 1, 1, 1))
+        alpha = K.random_uniform((self.batch_size, 1, 1, 1))
         return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
 
 class WGANGP():
@@ -75,7 +78,7 @@ class WGANGP():
         valid = self.critic(real_img)
 
         # Construct weighted average between real and fake images
-        interpolated_img = RandomWeightedAverage()([real_img, fake_img])
+        interpolated_img = RandomWeightedAverage(args.batch_size)([real_img, fake_img])
         # Determine validity of weighted sample
         validity_interpolated = self.critic(interpolated_img)
 
@@ -120,7 +123,7 @@ class WGANGP():
         cpc_loss = cpc([tpred, tz])
 
         self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
-        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', None], loss_weights=[1.0, 1.0, 0.0], optimizer=optimizer)
+        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', None], loss_weights=[10.0, 1.0, 0.0], optimizer=optimizer)
 
     def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
         """
@@ -433,7 +436,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                     '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
 
             print('\n%s' % ('-' * 40))
-            print('Train loss: %.2f, Accuracy: %.2f \t Validation loss: %.2f, Accuracy: %.2f' % (np.mean(avg0), np.mean(avg2), np.mean(avg1), np.mean(avg3)))
+            print('Train loss: %.2f, Accuracy: %.2f \t Validation loss: %.2f, Accuracy: %.2f' % (100.0 * np.mean(avg0), 100.0 * np.mean(avg2), 100.0 * np.mean(avg1), 100.0 * np.mean(avg3)))
             print('%s' % ('-' * 40))
 
             summary = session.run(merged1,
@@ -449,7 +452,7 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
         # Saves the model
         # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
-        model.save(join(output_dir, args.name + '.h5'))
+        model.save(join(output_dir, 'cpc_' + args.name + '.h5'))
 
         # Saves the encoder alone
         encoder = model.layers[1].layer
@@ -492,13 +495,12 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                 '\r Epoch {}: train[{} / {}]'.format(epoch, i, len(train_data)))
 
         print('\n%s' % ('-' * 40))
-        print('Training -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (np.mean(avg0), np.mean(avg1), np.mean(avg2)))
-        print('%s' % ('-' * 40))
+        print('Training -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (100.0 * np.mean(avg0), 100.0 * np.mean(avg1), 100.0 * np.mean(avg2)))
 
         summary = session.run(merged2,
-                    feed_dict={g_train_loss_critic_ph: g_loss[1],
-                                g_train_loss_cpc_ph: g_loss[2],
-                                d_train_loss_ph: d_loss[0],
+                    feed_dict={g_train_loss_critic_ph: np.mean(avg0),
+                                g_train_loss_cpc_ph: np.mean(avg1),
+                                d_train_loss_ph: np.mean(avg2),
                                 raw_train_image_ph: image[:1],
                                 recon_train_image_ph: recon[:1]
                             })
@@ -526,29 +528,20 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                 '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
 
 
-        print('\n%s' % ('-' * 40))
-        print('Training -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (np.mean(avg0), np.mean(avg1), np.mean(avg2)))
+        print('\n')
+        print('Validation -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (100.0 * np.mean(avg0), 100.0 * np.mean(avg1), 100.0 * np.mean(avg2)))
         print('%s' % ('-' * 40))
 
         summary = session.run(merged3,
-                        feed_dict={g_test_loss_critic_ph: g_loss[1],
-                                    g_test_loss_cpc_ph: g_loss[2],
-                                    d_test_loss_ph: d_loss[0],
+                        feed_dict={g_test_loss_critic_ph: np.mean(avg0),
+                                    g_test_loss_cpc_ph: np.mean(avg1),
+                                    d_test_loss_ph: np.mean(avg2),
                                     raw_test_image_ph: image[:1],
                                     recon_test_image_ph: recon[:1]
                                 })
 
         writer.add_summary(summary, epoch)
         writer.flush()
-
-    # print(image[0].shape) 
-    #plot
-    fig = plt.figure()
-    ax1 = fig.add_subplot(1, 2, 1)
-    ax2 = fig.add_subplot(1, 2, 2)
-    ax1.imshow(image[0] * 0.5 + 0.5)
-    ax2.imshow(recon[0] * 0.5 + 0.5)
-    plt.show()
     
     # Saves the model
     # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
@@ -556,6 +549,16 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     # Saves the encoder alone
     gan.critic_model.save(join(output_dir, 'dis_' + args.name + '.h5'))
+
+    for i in range(batch_size):
+        # print(image[0].shape) 
+        #plot
+        fig = plt.figure()
+        ax1 = fig.add_subplot(1, 2, 1)
+        ax2 = fig.add_subplot(1, 2, 2)
+        ax1.imshow(image[i] * 0.5 + 0.5)
+        ax2.imshow(recon[i] * 0.5 + 0.5)
+        plt.show()
 
 if __name__ == "__main__":
 
@@ -571,7 +574,7 @@ if __name__ == "__main__":
         help='loadpath')
     argparser.add_argument(
         '-e', '--cpc-epochs',
-        default=15,
+        default=5,
         type=int,
         help='cpc epochs')
     argparser.add_argument(
@@ -595,10 +598,11 @@ if __name__ == "__main__":
 
     args.predict_terms = predict_terms
     args.code_size = 10
+    args.batch_size = 128
 
     train_model(
         args, 
-        batch_size=32,
+        batch_size=args.batch_size,
         output_dir='models/64x64',
         code_size=args.code_size,
         lr=args.lr,
