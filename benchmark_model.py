@@ -132,10 +132,10 @@ if __name__ == "__main__":
 
     benchmark_model(
         args, 
-        encoder_path='models/64x64/encoder_' + args.name + '.h5',
+        encoder_path='models/encoder_' + args.name + '.h5',
         epochs=15,
         batch_size=64,
-        output_dir='models/64x64',
+        output_dir='models/',
         lr=1e-3,
         image_size=64,
         color=True

@@ -27,6 +27,15 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+
+import os
+if not os.path.exists('models/'):
+    os.makedirs('models/')
+
+if not os.path.exists('fig'):
+    os.makedirs('fig')
+
+
 class RandomWeightedAverage(_Merge):
     """Provides a (random) weighted average between real and generated image samples"""
     def __init__(self, batch_size):
@@ -616,7 +625,7 @@ if __name__ == "__main__":
     train_model(
         args, 
         batch_size=args.batch_size,
-        output_dir='models/64x64',
+        output_dir='models/',
         code_size=args.code_size,
         lr=args.lr,
         terms=4,
