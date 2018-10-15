@@ -123,7 +123,7 @@ class WGANGP():
         cpc_loss = cpc([tpred, tz])
 
         self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
-        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', None], loss_weights=[10.0, 1.0, 0.0], optimizer=optimizer)
+        self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', None], loss_weights=[args.gan_weight, 1.0, 0.0], optimizer=optimizer)
 
     def gradient_penalty_loss(self, y_true, y_pred, averaged_samples):
         """
@@ -587,6 +587,11 @@ if __name__ == "__main__":
         default=1e-3,
         type=float,
         help='Learning rate')
+    argparser.add_argument(
+        '--gan-weight',
+        default=1.0,
+        type=float,
+        help='GAN Weight')
     argparser.add_argument('--doctor', action='store_true', default=False, help='Doctor')
         
     args = argparser.parse_args()
