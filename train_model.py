@@ -318,7 +318,8 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     # Compile model
     cpc_model.compile(
         optimizer=keras.optimizers.Adam(lr=learning_rate),
-        loss=[None, 'binary_crossentropy']
+        loss=[None, 'binary_crossentropy'],
+        metrics=['binary_accuracy']
     )
     cpc_model.summary()
 
@@ -413,23 +414,33 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
     else:
         print('Start Training CPC')
         for epoch in range(args.cpc_epochs // 10):
-            for i in range(len(train_data) // 50):
+
+            avg0, avg1, avg2, avg3 = [], [], [], []
+            for i in range(len(train_data) // 10):
                 train_batch = next(train_data)
                 train_result = model.train_on_batch(train_batch[0][:2], train_batch[1])
+                avg0.append(train_result[0])
+                avg2.append(train_result[2])
                 sys.stdout.write(
                     '\r Epoch {}: training[{} / {}]'.format(epoch, i, len(train_data)))
 
-            for i in range(len(validation_data) // 50):
+            for i in range(len(validation_data) // 10):
                 validation_batch = next(validation_data)
                 validation_result = model.test_on_batch(validation_batch[0][:2], validation_batch[1])
+                avg1.append(validation_result[0])
+                avg3.append(validation_result[2])
                 sys.stdout.write(
                     '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
 
+            print('\n%s' % ('-' * 40))
+            print('Train loss: %.2f, Accuracy: %.2f \t Validation loss: %.2f, Accuracy: %.2f' % (np.mean(avg0), np.mean(avg1), np.mean(avg2), np.mean(avg3)))
+            print('%s' % ('-' * 40))
+
             summary = session.run(merged1,
-                                feed_dict={train_loss_ph: train_result[0],
-                                            val_loss_ph: validation_result[0],
-                                            train_acc_ph: train_result[1],
-                                            val_acc_ph: validation_result[1]
+                                feed_dict={train_loss_ph: np.mean(avg0),
+                                            val_loss_ph: np.mean(avg1),
+                                            train_acc_ph: np.mean(avg2),
+                                            val_acc_ph: np.mean(avg3)
                                             })
 
             writer.add_summary(summary, epoch)
@@ -457,7 +468,9 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     for epoch in range(args.gan_epochs):
 
-        for i in range(len(train_data) // 50):
+
+        avg0, avg1, avg2 = [], [], []
+        for i in range(len(train_data) // 10):
             train_batch = next(train_data)
 
             preds, _ = model.predict(train_batch[0][:2], batch_size=batch_size)
@@ -466,33 +479,36 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                 noise = np.random.normal(0, 1, (batch_size, args.code_size))
                 image = train_batch[0][0][:, random.randint(0,3)]
                 d_loss = gan.critic_model.train_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
+                avg2.append(d_loss[0])
+
 
             image = train_batch[0][2][:, 0]
             g_loss = gan.generator_model.train_on_batch([noise, preds[:, 0]], [valid, cpc_true])
+            avg0.append(g_loss[1])
+            avg1.append(g_loss[2])
+
             _, _, recon = gan.generator_model.predict([noise, preds[:, 0]], batch_size=batch_size)
             sys.stdout.write(
                 '\r Epoch {}: train[{} / {}]'.format(epoch, i, len(train_data)))
-        summary = session.run(merged2,
-                        feed_dict={g_train_loss_critic_ph: g_loss[1],
-                                    g_train_loss_cpc_ph: g_loss[2],
-                                    d_train_loss_ph: d_loss[0],
-                                    raw_train_image_ph: image[:1],
-                                    recon_train_image_ph: recon[:1]
-                                })
 
-        # print(image[0].shape) 
-        #plot
-        fig = plt.figure()
-        ax1 = fig.add_subplot(1, 2, 1)
-        ax2 = fig.add_subplot(1, 2, 2)
-        ax1.imshow(image[0] * 0.5 + 0.5)
-        ax2.imshow(recon[0] * 0.5 + 0.5)
-        plt.show()
+        print('\n%s' % ('-' * 40))
+        print('Training -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (np.mean(avg0), np.mean(avg1), np.mean(avg2)))
+        print('%s' % ('-' * 40))
+
+        summary = session.run(merged2,
+                    feed_dict={g_train_loss_critic_ph: g_loss[1],
+                                g_train_loss_cpc_ph: g_loss[2],
+                                d_train_loss_ph: d_loss[0],
+                                raw_train_image_ph: image[:1],
+                                recon_train_image_ph: recon[:1]
+                            })
 
         writer.add_summary(summary, epoch)
         writer.flush()
 
-        for i in range(len(validation_data) // 50):
+        avg0, avg1, avg2 = [], [], []
+
+        for i in range(len(validation_data) // 10):
             validation_batch = next(validation_data)
 
 
@@ -500,11 +516,19 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
             noise = np.random.normal(0, 1, (batch_size, args.code_size))
             image = validation_batch[0][2][:, 0]
             d_loss = gan.critic_model.test_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
+            avg2.append(d_loss[0])
             g_loss = gan.generator_model.test_on_batch([noise, preds[:, 0]], [valid, cpc_true])
             _, _, recon = gan.generator_model.predict([noise, preds[:, 0]], batch_size=batch_size)
+            avg0.append(g_loss[1])
+            avg1.append(g_loss[2])
 
             sys.stdout.write(
                 '\r Epoch {}: validation[{} / {}]'.format(epoch, i, len(validation_data)))
+
+
+        print('\n%s' % ('-' * 40))
+        print('Training -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (np.mean(avg0), np.mean(avg1), np.mean(avg2)))
+        print('%s' % ('-' * 40))
 
         summary = session.run(merged3,
                         feed_dict={g_test_loss_critic_ph: g_loss[1],
@@ -517,6 +541,15 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
         writer.add_summary(summary, epoch)
         writer.flush()
 
+    # print(image[0].shape) 
+    #plot
+    fig = plt.figure()
+    ax1 = fig.add_subplot(1, 2, 1)
+    ax2 = fig.add_subplot(1, 2, 2)
+    ax1.imshow(image[0] * 0.5 + 0.5)
+    ax2.imshow(recon[0] * 0.5 + 0.5)
+    plt.show()
+    
     # Saves the model
     # Remember to add custom_objects={'CPCLayer': CPCLayer} to load_model when loading from disk
     gan.generator_model.save(join(output_dir, 'generator_' + args.name + '.h5'))
