@@ -230,7 +230,7 @@ class SortedNumberGenerator(object):
 
     ''' Data generator providing lists of sorted numbers '''
 
-    def __init__(self, batch_size, subset, terms, positive_samples=1, predict_terms=1, image_size=28, color=False, rescale=True, word_size=4):
+    def __init__(self, batch_size, subset, terms, positive_samples=1, predict_terms=1, image_size=28, color=False, rescale=True, max_int=5000):
 
         # Set params
         self.positive_samples = positive_samples
@@ -246,7 +246,17 @@ class SortedNumberGenerator(object):
         self.mnist_handler = MnistHandler()
         self.n_samples = self.mnist_handler.get_n_samples(subset) // terms
         self.n_batches = self.n_samples // batch_size
-        self.word_size = word_size
+        self.max_int = max_int
+        self.word_size = self.compute_word_size(self.max_int)
+
+    def compute_word_size(self, max_int):
+        word_size = 0
+
+        while max_int > 0:
+                max_int //= 10
+                word_size += 1
+        
+        return word_size
 
     def __iter__(self):
         return self
@@ -258,18 +268,12 @@ class SortedNumberGenerator(object):
         return self.n_batches
 
     def next(self):
-        def consecutive_numbers(max_int, hist_num, future_num):
-            i = max_int
-            i_len = 0
-            while i > 0:
-                i //= 10
-                i_len += 1
-
-            start = np.random.randint(0, max_int)
+        def consecutive_numbers(hist_num, future_num):
+            start = np.random.randint(0, self.max_int)
             
             def array_n(n):
-                result = np.zeros(i_len, dtype=np.int8)
-                for i in range(1, i_len+1):
+                result = np.zeros(self.word_size, dtype=np.int8)
+                for i in range(1, self.word_size+1):
                     result[-i] = n % 10
                     n //= 10
 
@@ -295,7 +299,7 @@ class SortedNumberGenerator(object):
         for b in range(self.batch_size):
                 
             # Set ordered predictions for positive samples
-            sentence = consecutive_numbers(5000, self.terms, self.predict_terms)
+            sentence = consecutive_numbers(self.terms, self.predict_terms)
             # true_sentence = np.copy(sentence)
             sentence = np.concatenate([sentence, sentence[-self.predict_terms:]], axis=0)
             
@@ -432,7 +436,7 @@ def concat_number(images):
 if __name__ == "__main__":
 
     # Test SortedNumberGenerator
-    ag = SortedNumberGenerator(batch_size=8, subset='train', terms=4, positive_samples=4, predict_terms=4, image_size=64, color=True, rescale=False)
+    ag = SortedNumberGenerator(batch_size=8, subset='train', terms=2, positive_samples=4, predict_terms=4, image_size=64, color=True, rescale=False, max_int=99)
     for (x, y, z), labels in ag:
         plot_sequences(x, y, labels, output_path=r'resources/batch_sample_sorted.png')
         break
