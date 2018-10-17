@@ -258,6 +258,34 @@ class SortedNumberGenerator(object):
         return self.n_batches
 
     def next(self):
+        def consecutive_numbers(max_int, hist_num, future_num):
+            i = max_int
+            i_len = 0
+            while i > 0:
+                i //= 10
+                i_len += 1
+
+            start = np.random.randint(0, max_int)
+            
+            def array_n(n):
+                result = np.zeros(i_len, dtype=np.int8)
+                for i in range(1, i_len+1):
+                    result[-i] = n % 10
+                    n //= 10
+
+                return result
+            
+            result = np.array([array_n(start + i) for i in range(hist_num + future_num)])
+        
+            return result
+
+        def concat_number(images):
+            batch_size, sequence_len, word_size, height, width, channel = images.shape
+            images = np.transpose(images, [0, 1, 2, 4, 3, 5])
+            images = images.reshape(batch_size, sequence_len, word_size * width, height, channel)
+            images = np.transpose(images, [0, 1, 3, 2, 4])
+
+            return images
 
         # Build sentences
         image_labels = np.zeros((self.batch_size, self.terms + self.predict_terms + self.predict_terms, self.word_size))
@@ -265,27 +293,6 @@ class SortedNumberGenerator(object):
         sentence_labels = np.ones((self.batch_size, 1)).astype('int32')
         positive_samples_n = self.positive_samples
         for b in range(self.batch_size):
-
-            def consecutive_numbers(max_int, hist_num, future_num):
-                i = max_int
-                i_len = 0
-                while i > 0:
-                    i //= 10
-                    i_len += 1
-
-                start = np.random.randint(0, max_int)
-                
-                def array_n(n):
-                    result = np.zeros(i_len, dtype=np.int8)
-                    for i in range(1, i_len+1):
-                        result[-i] = n % 10
-                        n //= 10
-
-                    return result
-                
-                result = np.array([array_n(start + i) for i in range(hist_num + future_num)])
-            
-                return result
                 
             # Set ordered predictions for positive samples
             sentence = consecutive_numbers(5000, self.terms, self.predict_terms)
@@ -314,9 +321,9 @@ class SortedNumberGenerator(object):
         images = images.reshape((self.batch_size, self.terms + self.predict_terms + self.predict_terms, self.word_size, images.shape[1], images.shape[2], images.shape[3]))
         # true_images = true_images.reshape((self.batch_size, self.terms + self.predict_terms, true_images.shape[1], true_images.shape[2], true_images.shape[3]))
         
-        x_images = images[:, :self.terms, ...]
-        z_images = images[:, self.terms: -self.predict_terms, ...]
-        y_images = images[:, -self.predict_terms:, ...]
+        x_images = concat_number(images[:, :self.terms, ...])
+        z_images = concat_number(images[:, self.terms: -self.predict_terms, ...])
+        y_images = concat_number(images[:, -self.predict_terms:, ...])
         # Randomize
         idxs = np.random.choice(sentence_labels.shape[0], sentence_labels.shape[0], replace=False)
 
@@ -427,9 +434,6 @@ if __name__ == "__main__":
     # Test SortedNumberGenerator
     ag = SortedNumberGenerator(batch_size=8, subset='train', terms=4, positive_samples=4, predict_terms=4, image_size=64, color=True, rescale=False)
     for (x, y, z), labels in ag:
-        x = concat_number(x)
-        y = concat_number(y)
-        z = concat_number(z)
         plot_sequences(x, y, labels, output_path=r'resources/batch_sample_sorted.png')
         break
 
