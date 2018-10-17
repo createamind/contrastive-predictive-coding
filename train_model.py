@@ -577,6 +577,6 @@ if __name__ == "__main__":
         terms=args.terms,
         predict_terms=args.predict_terms,
         image_size=args.image_size,
-        color=True
+        color=False
     ) 
 
