@@ -82,19 +82,18 @@ class WGANGP():
 
         # Generate image based of noise (fake sample)
 
-        fake_img = keras.layers.TimeDistributed(self.generator)(z_disc_con)
+        fake_img = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.generator(keras.layers.Lambda(lambda z: z[:,0])(z_disc_con)))
 
         # Discriminator determines validity of the real and fake images
-        print(fake_img)
-        fake = keras.layers.TimeDistributed(self.critic)(fake_img)
-        print(fake)
-        valid = keras.layers.TimeDistributed(self.critic)(real_img)
+
+        fake = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(fake_img)))
+        valid = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(real_img)))
 
         # Construct weighted average between real and fake images
 
         interpolated_img = RandomWeightedAverage(args.batch_size, args.predict_terms)([real_img, fake_img])
         # Determine validity of weighted sample
-        validity_interpolated = keras.layers.TimeDistributed(self.critic)(interpolated_img)
+        validity_interpolated = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(interpolated_img)))
 
         # Use Python partial to provide loss function with additional
         # 'averaged_samples' argument
@@ -126,12 +125,12 @@ class WGANGP():
         z_gen_con = keras.layers.Lambda(lambda i: K.concatenate([i[0], i[1]], axis=-1))([z_gen, pred])
 
         # Generate images based of noise
-        img = keras.layers.TimeDistributed(self.generator)(z_gen_con)
+        img = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.generator(keras.layers.Lambda(lambda z: z[:,0])(z_gen_con)))
         # Discriminator determines validity
-        valid = keras.layers.TimeDistributed(self.critic)(img)
+        valid = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(img)))
         # Defines generator model
 
-        z = keras.layers.TimeDistributed(encoder)(img)
+        z = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(encoder(keras.layers.Lambda(lambda z: z[:,0])(img)))
 
         # tz = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(z)
         # tpred = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(pred)
@@ -319,9 +318,7 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
 
     # Define rest of model
     x_input = keras.layers.Input((terms, image_shape[0], image_shape[1], image_shape[2]))
-    print(x_input)
     x_encoded = keras.layers.TimeDistributed(encoder_model)(x_input)
-    print(x_encoded)
 
     context = network_autoregressive(x_encoded)
     preds = network_prediction(context, code_size, predict_terms)
