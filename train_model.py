@@ -609,18 +609,28 @@ if __name__ == "__main__":
         default=1.0,
         type=float,
         help='GAN Weight')
-    argparser.add_argument('--doctor', action='store_true', default=False, help='Doctor')
+    argparser.add_argument(
+        '--code-size',
+        default=64,
+        type=int,
+        help='Code Size')
+    argparser.add_argument(
+        '--batch-size',
+        default=128,
+        type=int,
+        help='Batch Size')
+    argparser.add_argument(
+        '--predict-terms',
+        default=4,
+        type=int,
+        help='Predict Terms')
+    argparser.add_argument(
+        '--terms',
+        default=4,
+        type=int,
+        help='X Terms')
         
     args = argparser.parse_args()
-
-    if args.doctor:
-        predict_terms = 1
-    else:
-        predict_terms = 1
-
-    args.predict_terms = predict_terms
-    args.code_size = 10
-    args.batch_size = 128
 
     train_model(
         args, 
@@ -628,8 +638,8 @@ if __name__ == "__main__":
         output_dir='models/',
         code_size=args.code_size,
         lr=args.lr,
-        terms=4,
-        predict_terms=predict_terms,
+        terms=args.terms,
+        predict_terms=args.predict_terms,
         image_size=28,
         color=True
     ) 
