@@ -38,17 +38,18 @@ if not os.path.exists('fig'):
 
 class RandomWeightedAverage(_Merge):
     """Provides a (random) weighted average between real and generated image samples"""
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, predict_terms):
         super(RandomWeightedAverage, self).__init__()
         self.batch_size = batch_size
+        self.predict_terms = predict_terms
     def _merge_function(self, inputs):
-        alpha = K.random_uniform((self.batch_size, 1, 1, 1))
+        alpha = K.random_uniform((self.batch_size, self.predict_terms, 1, 1, 1))
         return (alpha * inputs[0]) + ((1 - alpha) * inputs[1])
 
 class WGANGP():
     def __init__(self, args, encoder, cpc):
-        self.img_rows = 28
-        self.img_cols = 28
+        self.img_rows = args.image_size
+        self.img_cols = args.image_size
         self.channels = 3
         self.img_shape = (self.img_rows, self.img_cols, self.channels)
         self.latent_dim = args.code_size
@@ -71,25 +72,28 @@ class WGANGP():
         self.generator.trainable = False
 
         # Image input (real sample)
-        real_img = Input(shape=self.img_shape)
+        real_img = Input(shape=(self.predict_terms, self.img_shape))
 
         # Noise input
-        z_disc = Input(shape=(self.latent_dim, ))
-        pred = Input(shape=(self.latent_dim, ))
+        z_disc = Input(shape=(self.predict_terms, self.latent_dim))
+        pred = Input(shape=(self.predict_terms, self.latent_dim))
 
         z_disc_con = keras.layers.Lambda(lambda i: K.concatenate([i[0], i[1]], axis=-1))([z_disc, pred])
 
         # Generate image based of noise (fake sample)
-        fake_img = self.generator(z_disc_con)
+
+        fake_img = keras.layers.TimeDistributed(self.generator)(z_disc_con)
 
         # Discriminator determines validity of the real and fake images
-        fake = self.critic(fake_img)
-        valid = self.critic(real_img)
+        fake = keras.layers.TimeDistributed(self.critic)(fake_img)
+        valid = keras.layers.TimeDistributed(self.critic)(real_img)
 
         # Construct weighted average between real and fake images
-        interpolated_img = RandomWeightedAverage(args.batch_size)([real_img, fake_img])
+
+        interpolated_img = RandomWeightedAverage(args.batch_size, args.predict_terms)([real_img, fake_img])
+
         # Determine validity of weighted sample
-        validity_interpolated = self.critic(interpolated_img)
+        validity_interpolated = keras.layers.TimeDistributed(self.critic)(interpolated_img)
 
         # Use Python partial to provide loss function with additional
         # 'averaged_samples' argument
@@ -114,22 +118,22 @@ class WGANGP():
         self.generator.trainable = True
 
         # Sampled noise for input to generator
-        z_gen = Input(shape=(self.latent_dim,))
-        pred = Input(shape=(self.latent_dim,))
+        z_gen = Input(shape=(self.predict_terms, self.latent_dim))
+        pred = Input(shape=(self.predict_terms, self.latent_dim))
 
         z_gen_con = keras.layers.Lambda(lambda i: K.concatenate([i[0], i[1]], axis=-1))([z_gen, pred])
 
         # Generate images based of noise
-        img = self.generator(z_gen_con)
+        img = keras.layers.TimeDistributed(self.generator)(z_gen_con)
         # Discriminator determines validity
-        valid = self.critic(img)
+        valid = keras.layers.TimeDistributed(self.critic)(img)
         # Defines generator model
 
-        z = encoder(img)
+        z = keras.layers.TimeDistributed(encoder)(img)
 
-        tz = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(z)
-        tpred = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(pred)
-        cpc_loss = cpc([tpred, tz])
+        # tz = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(z)
+        # tpred = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(pred)
+        cpc_loss = cpc([pred, z])
 
         self.generator_model = Model(inputs=[z_gen, pred], outputs=[valid, cpc_loss, img])
         self.generator_model.compile(loss=[self.wasserstein_loss, 'binary_crossentropy', None], loss_weights=[args.gan_weight, 1.0, 0.0], optimizer=optimizer)
@@ -358,68 +362,6 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
                         code_size=code_size, learning_rate=lr)
     gan = WGANGP(args, encoder, cpc)
 
-    session = tf.Session()
-
-    #All placeholders for Tensorboard
-    train_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m1_1 = tf.summary.scalar('train/loss', train_loss_ph)
-
-    val_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m1_2 = tf.summary.scalar('val/loss', val_loss_ph)
-
-    train_acc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m1_3 = tf.summary.scalar('train/acc', train_acc_ph)
-
-    val_acc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    # val_acc_ph = K.print_tensor(val_acc_ph, message='val_acc_ph')
-    m1_4 = tf.summary.scalar('val/acc', val_acc_ph)
-
-    g_train_loss_critic_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    g_train_loss_critic_ph = tf.Print(g_train_loss_critic_ph, [g_train_loss_critic_ph])
-    m2_1 = tf.summary.scalar('train/generator/critic_loss', g_train_loss_critic_ph)
-
-    g_train_loss_cpc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m2_2 = tf.summary.scalar('train/generator/cpc_loss', g_train_loss_cpc_ph)
-
-    d_train_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m2_3 = tf.summary.scalar('train/dis/loss', d_train_loss_ph)
-
-    g_test_loss_critic_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m3_1 = tf.summary.scalar('test/generator/critic_loss', g_test_loss_critic_ph)
-
-    g_test_loss_cpc_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m3_2 = tf.summary.scalar('test/generator/cpc_loss', g_test_loss_cpc_ph)
-
-    d_test_loss_ph = tf.placeholder(shape=(), dtype=tf.float32)
-    m3_3 = tf.summary.scalar('test/dis/loss', d_test_loss_ph)
-
-    raw_train_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
-    # raw_train_image_ph = K.print_tensor(raw_train_image_ph, message='raw_train_image_ph')
-    raw_train_image_ph = tf.cast((tf.clip_by_value(raw_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    m2_4 = tf.summary.image('train/raw', raw_train_image_ph)
-
-    recon_train_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
-    recon_train_image_ph = tf.Print(recon_train_image_ph, [recon_train_image_ph])
-    recon_train_image_ph = tf.cast((tf.clip_by_value(recon_train_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    m2_5 = tf.summary.image('train/recon', recon_train_image_ph)
-
-    raw_test_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
-    raw_test_image_ph = tf.Print(raw_test_image_ph, [raw_test_image_ph])
-    raw_test_image_ph = tf.cast((tf.clip_by_value(raw_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    m3_4 = tf.summary.image('test/raw', raw_test_image_ph)
-
-    recon_test_image_ph = tf.placeholder(shape=(1,28,28,3), dtype=tf.float32)
-    recon_test_image_ph = tf.Print(recon_test_image_ph, [recon_test_image_ph])
-    recon_test_image_ph = tf.cast((tf.clip_by_value(recon_test_image_ph, -1, 1) + 1) * 127, tf.uint8)
-    m3_5 = tf.summary.image('test/recon', recon_test_image_ph)
-
-    merged1 = tf.summary.merge([m1_1, m1_2, m1_3, m1_4])
-    merged2 = tf.summary.merge([m2_1, m2_2, m2_3, m2_4, m2_5])
-    merged3 = tf.summary.merge([m3_1, m3_2, m3_3, m3_4, m3_5])
-
-    writer = tf.summary.FileWriter('./logs/train_' + args.name + '_' +datetime.datetime.now().strftime('%d_%H-%M-%S '))
-
-
     if len(args.load_name) > 0:
         model = keras.models.load_model(join(output_dir, args.load_name))
 
@@ -448,15 +390,6 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
             print('Train loss: %.2f, Accuracy: %.2f \t Validation loss: %.2f, Accuracy: %.2f' % (100.0 * np.mean(avg0), 100.0 * np.mean(avg2), 100.0 * np.mean(avg1), 100.0 * np.mean(avg3)))
             print('%s' % ('-' * 40))
 
-            summary = session.run(merged1,
-                                feed_dict={train_loss_ph: np.mean(avg0),
-                                            val_loss_ph: np.mean(avg1),
-                                            train_acc_ph: np.mean(avg2),
-                                            val_acc_ph: np.mean(avg3)
-                                            })
-
-            writer.add_summary(summary, epoch)
-            writer.flush()
         
 
         # Saves the model
@@ -488,48 +421,38 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
             preds, _ = model.predict(train_batch[0][:2], batch_size=batch_size)
 
             for _ in range(5):
-                noise = np.random.normal(0, 1, (batch_size, args.code_size))
-                image = train_batch[0][0][:, random.randint(0,3)]
-                d_loss = gan.critic_model.train_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
+                noise = np.random.normal(0, 1, (batch_size, predict_terms, args.code_size))
+                image = train_batch[0][1]
+                d_loss = gan.critic_model.train_on_batch([image, noise, preds], [valid, fake, dummy])
                 avg2.append(d_loss[0])
 
 
-            image = train_batch[0][2][:, 0]
-            g_loss = gan.generator_model.train_on_batch([noise, preds[:, 0]], [valid, cpc_true])
+            image = train_batch[0][2]
+            g_loss = gan.generator_model.train_on_batch([noise, preds], [valid, cpc_true])
             avg0.append(g_loss[1])
             avg1.append(g_loss[2])
 
-            _, _, recon = gan.generator_model.predict([noise, preds[:, 0]], batch_size=batch_size)
+            _, _, recon = gan.generator_model.predict([noise, preds], batch_size=batch_size)
             sys.stdout.write(
                 '\r Epoch {}: train[{} / {}]'.format(epoch, i, len(train_data)))
 
         print('\n%s' % ('-' * 40))
         print('Training -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (100.0 * np.mean(avg0), 100.0 * np.mean(avg1), 100.0 * np.mean(avg2)))
 
-        summary = session.run(merged2,
-                    feed_dict={g_train_loss_critic_ph: np.mean(avg0),
-                                g_train_loss_cpc_ph: np.mean(avg1),
-                                d_train_loss_ph: np.mean(avg2),
-                                raw_train_image_ph: image[:1],
-                                recon_train_image_ph: recon[:1]
-                            })
-
-        writer.add_summary(summary, epoch)
-        writer.flush()
 
         avg0, avg1, avg2 = [], [], []
 
         for i in range(len(validation_data) // 1):
             validation_batch = next(validation_data)
 
-
             preds, _ = model.predict(validation_batch[0][:2], batch_size=batch_size)
-            noise = np.random.normal(0, 1, (batch_size, args.code_size))
-            image = validation_batch[0][2][:, 0]
-            d_loss = gan.critic_model.test_on_batch([image, noise, preds[:,0]], [valid, fake, dummy])
+            noise = np.random.normal(0, 1, (batch_size, predict_terms, args.code_size))
+            image = validation_batch[0][1]
+            d_loss = gan.critic_model.test_on_batch([image, noise, preds], [valid, fake, dummy])
             avg2.append(d_loss[0])
-            g_loss = gan.generator_model.test_on_batch([noise, preds[:, 0]], [valid, cpc_true])
-            _, _, recon = gan.generator_model.predict([noise, preds[:, 0]], batch_size=batch_size)
+            image = validation_batch[0][2]
+            g_loss = gan.generator_model.test_on_batch([noise, preds], [valid, cpc_true])
+            _, _, recon = gan.generator_model.predict([noise, preds], batch_size=batch_size)
             avg0.append(g_loss[1])
             avg1.append(g_loss[2])
 
@@ -541,23 +464,20 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
         print('Validation -- Generator Critic loss: %.2f, Generator CPC loss: %.2f, Discriminator: %.2f' % (100.0 * np.mean(avg0), 100.0 * np.mean(avg1), 100.0 * np.mean(avg2)))
         print('%s' % ('-' * 40))
 
-        summary = session.run(merged3,
-                        feed_dict={g_test_loss_critic_ph: np.mean(avg0),
-                                    g_test_loss_cpc_ph: np.mean(avg1),
-                                    d_test_loss_ph: np.mean(avg2),
-                                    raw_test_image_ph: image[:1],
-                                    recon_test_image_ph: recon[:1]
-                                })
-
-        writer.add_summary(summary, epoch)
-        writer.flush()
-
         if epoch % 10 == 0:
             fig = plt.figure()
-            ax1 = fig.add_subplot(1, 2, 1)
-            ax2 = fig.add_subplot(1, 2, 2)
-            ax1.imshow(image[0] * 0.5 + 0.5)
-            ax2.imshow(recon[0] * 0.5 + 0.5)
+            for i in range(terms):
+                ax = fig.add_subplot(2, terms + predict_terms, i+1)
+                ax.imshow(validation_batch[0][0][i] * 0.5 + 0.5)
+        
+            for i in range(predict_terms):
+                ax = fig.add_subplot(2, terms + predict_terms, terms+i+1)
+                ax.imshow(validation_batch[0][2][i] * 0.5 + 0.5)
+
+            for i in range(predict_terms):
+                ax = fig.add_subplot(2, terms + predict_terms, terms + predict_terms + terms+i+1)
+                ax.imshow(recon[0][i] * 0.5 + 0.5)
+
             plt.savefig('fig/' + args.name + '_epoch' + str(epoch) + '.png')
     
     # Saves the model
@@ -566,16 +486,6 @@ def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predi
 
     # Saves the encoder alone
     gan.critic_model.save(join(output_dir, 'dis_' + args.name + '.h5'))
-
-    for i in range(batch_size):
-        # print(image[0].shape) 
-        #plot
-        fig = plt.figure()
-        ax1 = fig.add_subplot(1, 2, 1)
-        ax2 = fig.add_subplot(1, 2, 2)
-        ax1.imshow(image[i] * 0.5 + 0.5)
-        ax2.imshow(recon[i] * 0.5 + 0.5)
-        plt.show()
 
 if __name__ == "__main__":
 
@@ -629,6 +539,11 @@ if __name__ == "__main__":
         default=4,
         type=int,
         help='X Terms')
+    argparser.add_argument(
+        '--image-size',
+        default=28,
+        type=int,
+        help='Image size')
         
     args = argparser.parse_args()
 
@@ -640,7 +555,7 @@ if __name__ == "__main__":
         lr=args.lr,
         terms=args.terms,
         predict_terms=args.predict_terms,
-        image_size=28,
+        image_size=args.image_size,
         color=True
     ) 
 
