@@ -606,7 +606,7 @@ if __name__ == "__main__":
         help='Learning rate')
     argparser.add_argument(
         '--gan-weight',
-        default=1.0,
+        default=0.01,
         type=float,
         help='GAN Weight')
     argparser.add_argument('--doctor', action='store_true', default=False, help='Doctor')
@@ -614,12 +614,12 @@ if __name__ == "__main__":
     args = argparser.parse_args()
 
     if args.doctor:
-        predict_terms = 1
+        predict_terms = 6
     else:
-        predict_terms = 1
+        predict_terms = 6
 
     args.predict_terms = predict_terms
-    args.code_size = 10
+    args.code_size = 32
     args.batch_size = 128
 
     train_model(
@@ -628,9 +628,9 @@ if __name__ == "__main__":
         output_dir='models/',
         code_size=args.code_size,
         lr=args.lr,
-        terms=4,
+        terms=6,
         predict_terms=predict_terms,
         image_size=28,
-        color=True
+        color=False
     ) 
 
