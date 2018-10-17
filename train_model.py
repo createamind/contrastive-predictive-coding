@@ -82,19 +82,18 @@ class WGANGP():
 
         # Generate image based of noise (fake sample)
 
-        fake_img = keras.layers.TimeDistributed(self.generator)(z_disc_con)
+        fake_img = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.generator(keras.layers.Lambda(lambda z: z[:,0])(z_disc_con))) for i in range(self.predict_terms)])
 
         # Discriminator determines validity of the real and fake images
-        print(fake_img)
-        fake = keras.layers.TimeDistributed(self.critic)(fake_img)
-        print(fake)
-        valid = keras.layers.TimeDistributed(self.critic)(real_img)
+
+        fake = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(fake_img))) for i in range(self.predict_terms)])
+        valid = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(real_img))) for i in range(self.predict_terms)])
 
         # Construct weighted average between real and fake images
 
         interpolated_img = RandomWeightedAverage(args.batch_size, args.predict_terms)([real_img, fake_img])
         # Determine validity of weighted sample
-        validity_interpolated = keras.layers.TimeDistributed(self.critic)(interpolated_img)
+        validity_interpolated = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(interpolated_img))) for i in range(self.predict_terms)])
 
         # Use Python partial to provide loss function with additional
         # 'averaged_samples' argument
@@ -123,15 +122,15 @@ class WGANGP():
         z_gen = Input(shape=(self.predict_terms, self.latent_dim))
         pred = Input(shape=(self.predict_terms, self.latent_dim))
 
+
         z_gen_con = keras.layers.Lambda(lambda i: K.concatenate([i[0], i[1]], axis=-1))([z_gen, pred])
 
         # Generate images based of noise
-        img = keras.layers.TimeDistributed(self.generator)(z_gen_con)
+        img = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.generator(keras.layers.Lambda(lambda z: z[:,i])(z_gen_con))) for i in range(self.predict_terms)])
         # Discriminator determines validity
-        valid = keras.layers.TimeDistributed(self.critic)(img)
+        valid = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(self.critic(keras.layers.Lambda(lambda z: z[:,0])(img))) for i in range(self.predict_terms)])
         # Defines generator model
-
-        z = keras.layers.TimeDistributed(encoder)(img)
+        z = keras.layers.Concatenate(axis=1)([keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(encoder(keras.layers.Lambda(lambda z: z[:,0])(img))) for i in range(self.predict_terms)])
 
         # tz = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(z)
         # tpred = keras.layers.Lambda(lambda z: K.expand_dims(z, 1))(pred)
@@ -319,9 +318,7 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
 
     # Define rest of model
     x_input = keras.layers.Input((terms, image_shape[0], image_shape[1], image_shape[2]))
-    print(x_input)
     x_encoded = keras.layers.TimeDistributed(encoder_model)(x_input)
-    print(x_encoded)
 
     context = network_autoregressive(x_encoded)
     preds = network_prediction(context, code_size, predict_terms)
@@ -525,12 +522,12 @@ if __name__ == "__main__":
         help='loadpath')
     argparser.add_argument(
         '-e', '--cpc-epochs',
-        default=5,
+        default=30,
         type=int,
         help='cpc epochs')
     argparser.add_argument(
         '-g', '--gan-epochs',
-        default=15,
+        default=1000000,
         type=int,
         help='gan epochs')
     argparser.add_argument(
@@ -540,12 +537,12 @@ if __name__ == "__main__":
         help='Learning rate')
     argparser.add_argument(
         '--gan-weight',
-        default=1.0,
+        default=0.01,
         type=float,
         help='GAN Weight')
     argparser.add_argument(
         '--code-size',
-        default=10,
+        default=32,
         type=int,
         help='Code Size')
     argparser.add_argument(
@@ -555,12 +552,12 @@ if __name__ == "__main__":
         help='Batch Size')
     argparser.add_argument(
         '--predict-terms',
-        default=1,
+        default=10,
         type=int,
         help='Predict Terms')
     argparser.add_argument(
         '--terms',
-        default=4,
+        default=10,
         type=int,
         help='X Terms')
     argparser.add_argument(
