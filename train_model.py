@@ -1,4 +1,4 @@
-from data_utils import SortedNumberGenerator
+from data_utils import SortedNumberGenerator, compute_word_size
 from os.path import join, basename, dirname, exists
 import datetime
 import argparse
@@ -342,19 +342,21 @@ def network_cpc(args, image_shape, terms, predict_terms, code_size, learning_rat
     return (cpc_model, encoder_model, cpc_layer)
 
 
-def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predict_terms=4, image_size=28, color=False):
+def train_model(args, batch_size, output_dir, code_size, lr=1e-4, terms=4, predict_terms=4, image_size=28, color=False, max_int=5000, min_int=0):
 
     # Prepare data
     train_data = SortedNumberGenerator(batch_size=batch_size, subset='train', terms=terms,
                                        positive_samples=batch_size // 2, predict_terms=predict_terms,
-                                       image_size=image_size, color=color, rescale=True)
+                                       image_size=image_size, color=color, rescale=True, 
+                                       max_int=max_int, min_int=min_int)
 
     validation_data = SortedNumberGenerator(batch_size=batch_size, subset='valid', terms=terms,
                                             positive_samples=batch_size // 2, predict_terms=predict_terms,
-                                            image_size=image_size, color=color, rescale=True)
+                                            image_size=image_size, color=color, rescale=True,
+                                            max_int=9966, min_int=5555)
 
 
-    model, encoder, cpc = network_cpc(args, image_shape=(image_size, image_size, 3), terms=terms, predict_terms=predict_terms,
+    model, encoder, cpc = network_cpc(args, image_shape=(image_size, image_size * compute_word_size(max_int), 3), terms=terms, predict_terms=predict_terms,
                         code_size=code_size, learning_rate=lr)
     gan = WGANGP(args, encoder, cpc)
 
