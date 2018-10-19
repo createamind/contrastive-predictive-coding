@@ -306,10 +306,11 @@ class SortedNumberGenerator(object):
             if positive_samples_n <= 0:
                 # Set random predictions for negative samples
                 # Each predicted term draws a number from a distribution that excludes itself
-                idx = np.random.randint(self.terms + self.predict_terms, size=self.predict_terms)
-                predicted_terms = sentence[-self.predict_terms:]
-                predicted_terms = sentence[idx]
-                sentence[-self.predict_terms:] = predicted_terms
+                #idx = np.random.randint(self.terms + self.predict_terms, size=self.predict_terms)
+                #predicted_terms = sentence[-self.predict_terms:]
+                #predicted_terms = sentence[idx]
+                #sentence[-self.predict_terms:] = predicted_terms
+                sentence[-self.predict_terms:] = np.mod(sentence[-self.predict_terms:] + np.random.randint(1, 10, (self.predict_terms, self.word_size)), 10)
                 sentence_labels[b, :] = 0
             
             # Save sentence

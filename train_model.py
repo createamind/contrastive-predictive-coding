@@ -223,10 +223,10 @@ def network_encoder(x, code_size):
     x = keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, activation='linear')(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.LeakyReLU()(x)
-    x = keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, activation='linear')(x)
+    x = keras.layers.Conv2D(filters=128, kernel_size=3, strides=2, activation='linear')(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.LeakyReLU()(x)
-    x = keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, activation='linear')(x)
+    x = keras.layers.Conv2D(filters=256, kernel_size=3, strides=2, activation='linear')(x)
     x = keras.layers.BatchNormalization()(x)
     x = keras.layers.LeakyReLU()(x)
     x = keras.layers.Flatten()(x)
@@ -241,7 +241,7 @@ def network_autoregressive(x):
 
     ''' Define the network that integrates information along the sequence '''
 
-    x = keras.layers.GRU(units=256, return_sequences=False, name='ar_context')(x)
+    x = keras.layers.GRU(units=512, return_sequences=False, name='ar_context')(x)
 
     return x
 
@@ -593,7 +593,7 @@ if __name__ == "__main__":
         help='loadpath')
     argparser.add_argument(
         '-e', '--cpc-epochs',
-        default=5,
+        default=55,
         type=int,
         help='cpc epochs')
     argparser.add_argument(
@@ -616,12 +616,12 @@ if __name__ == "__main__":
     args = argparser.parse_args()
 
     if args.doctor:
-        predict_terms = 1
+        predict_terms = 4
     else:
-        predict_terms = 1
+        predict_terms = 4
 
     args.predict_terms = predict_terms
-    args.code_size = 10
+    args.code_size = 64
     args.batch_size = 128
 
     train_model(

@@ -1,3 +1,6 @@
 .vscode/
 *.pyc
 models/64x64/*
+resources/
+
+
