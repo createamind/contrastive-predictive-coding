@@ -8,6 +8,14 @@ import scipy
 import sys
 from matplotlib import pyplot as plt
 
+def compute_word_size(max_int):
+    word_size = 0
+
+    while max_int > 0:
+            max_int //= 10
+            word_size += 1
+    
+    return word_size
 
 class MnistHandler(object):
 
@@ -230,7 +238,7 @@ class SortedNumberGenerator(object):
 
     ''' Data generator providing lists of sorted numbers '''
 
-    def __init__(self, batch_size, subset, terms, positive_samples=1, predict_terms=1, image_size=28, color=False, rescale=True, max_int=5000):
+    def __init__(self, batch_size, subset, terms, positive_samples=1, predict_terms=1, image_size=28, color=False, rescale=True, max_int=5000, min_int=4995):
 
         # Set params
         self.positive_samples = positive_samples
@@ -247,16 +255,8 @@ class SortedNumberGenerator(object):
         self.n_samples = self.mnist_handler.get_n_samples(subset) // terms
         self.n_batches = self.n_samples // batch_size
         self.max_int = max_int
-        self.word_size = self.compute_word_size(self.max_int)
-
-    def compute_word_size(self, max_int):
-        word_size = 0
-
-        while max_int > 0:
-                max_int //= 10
-                word_size += 1
-        
-        return word_size
+        self.min_int = min_int
+        self.word_size = compute_word_size(self.max_int)
 
     def __iter__(self):
         return self
@@ -269,7 +269,7 @@ class SortedNumberGenerator(object):
 
     def next(self):
         def consecutive_numbers(hist_num, future_num):
-            start = np.random.randint(0, self.max_int)
+            start = np.random.randint(self.min_int, self.max_int+1)
             
             def array_n(n):
                 result = np.zeros(self.word_size, dtype=np.int8)
@@ -279,7 +279,7 @@ class SortedNumberGenerator(object):
 
                 return result
             
-            result = np.array([array_n(start + i) for i in range(hist_num + future_num)])
+            result = np.array([array_n((start + i)) for i in range(hist_num + future_num)])
         
             return result
 
@@ -436,7 +436,7 @@ def concat_number(images):
 if __name__ == "__main__":
 
     # Test SortedNumberGenerator
-    ag = SortedNumberGenerator(batch_size=8, subset='train', terms=2, positive_samples=4, predict_terms=4, image_size=64, color=True, rescale=False, max_int=99)
+    ag = SortedNumberGenerator(batch_size=8, subset='train', terms=2, positive_samples=4, predict_terms=4, image_size=64, color=True, rescale=False)
     for (x, y, z), labels in ag:
         plot_sequences(x, y, labels, output_path=r'resources/batch_sample_sorted.png')
         break
